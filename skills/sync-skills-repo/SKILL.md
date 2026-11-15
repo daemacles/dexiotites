@@ -72,15 +72,24 @@ For each of Jim's skills:
    skill, e.g. annotate-code's `scripts/comment_diff_check.py`.
 4. **Never delete.** If a skill exists in the repo but not in the account, leave it and report it.
 
-Leave `instructions/`, `docs/`, and `tests/` alone. For a skill **new** to the repo, also add a
-row for it to the appropriate skills table in `README.md`, writing a concise one-sentence summary
-of what it does (omitting `"Use when…"` trigger instructions so it matches existing rows).
+Leave `instructions/`, `docs/`, `tests/`, and `MAINTENANCE.md` alone. For a skill **new** to the
+repo, also add a row for it to the appropriate skills table in `README.md`, writing a concise
+one-sentence summary of what it does (omitting `"Use when…"` trigger instructions so it matches
+existing rows).
 
-## 4. Commit and push
+## 4. Validate, commit, and push
 
 1. If nothing changed, say so and stop. Don't make an empty commit.
-2. Commit with the message `Sync account skills: <comma-separated names>`, then push to `origin main`.
-3. **How to push depends on where the clone is:**
+2. **Validate before committing:**
+   - Run `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v` from the repo root.
+     Fix any hygiene failure (missing `README.md` row, trailing newline, `+x` bit, embedded-file
+     extraction). If an embedded script's own tests fail, **stop** and report the failure instead
+     of committing broken code.
+   - Read `MAINTENANCE.md` (§1 and §4) and check the diff (`git diff`) of changed skills against
+     it. Do not rewrite Jim's account skills silently during a sync—record any checklist findings
+     for step 5's report so Jim can tighten them if needed.
+3. Commit with the message `Sync account skills: <comma-separated names>`, then push to `origin main`.
+4. **How to push depends on where the clone is:**
    - **Cloud clone (attached with `add_repo`):** run `git -c push.negotiate=true push origin main`.
      If the push is refused for lack of permission, the repo was attached read-only. Call
      `add_repo` again with access `push`. A warning that push negotiation failed does not mean
@@ -97,4 +106,5 @@ of what it does (omitting `"Use when…"` trigger instructions so it matches exi
 ## 5. Report
 
 Tell Jim which skills were added, updated, unchanged, or present only in the repo, plus any
-conflicts you stopped on, and the commit hash and push status.
+conflicts you stopped on, any `MAINTENANCE.md` checklist findings on changed skills, external skill
+dependencies, and the commit hash and push status.

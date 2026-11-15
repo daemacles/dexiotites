@@ -8,7 +8,8 @@ into coding projects, plus mirrors of the personal Claude workflow skills built 
 | `instructions/COMMENTING.md` | Commenting standard for AI coding agents: purpose-first comments, sourced rationale, comment-only retrofits. Ends with exemplar codebases and references. |
 | `instructions/AGENTS-commenting-section.md` | Short block to append to a project's `AGENTS.md` so every agent session loads the core rules. |
 | `skills/` | One folder per skill (see [Skills](#skills)). |
-| `tests/` | Unit tests for embedded helper scripts (run `python3 -m unittest discover -s tests`). |
+| `MAINTENANCE.md` | Authoring and review checklist for updating skills, instructions, and verifiers (especially with smaller models). |
+| `tests/` | Unit and repository-hygiene tests (run `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v`). |
 | `docs/` | Reserved for specs and design notes. |
 
 **Prompting guide:** the living guide to working with LLMs is a Google Doc,

@@ -2,9 +2,19 @@
 
 This repository holds reusable instructions (`instructions/`) and agent skills (`skills/`).
 
+## Mandatory Pre-Flight & Verification Gate
+
+- **Before editing `skills/`, `instructions/`, or `README.md`:** read **`MAINTENANCE.md`** and apply
+  every check in the section(s) matching what you are changing.
+- **Before finishing any edit in this repo:** run
+  `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v` and fix any failure.
+- **When you uncover a new class of miss:** encode it in `tests/test_repo_hygiene.py` if checkable
+  in Python, or add a concise trigger bullet to `MAINTENANCE.md` (§5).
+
 ## Source-of-Truth & Editing Rules
 
-1. **`instructions/` and `tests/` are mastered in this git repository.** Edit them directly here.
+1. **`instructions/`, `tests/`, and `MAINTENANCE.md` are mastered in this git repository.** Edit
+   them directly here.
 2. **`skills/` mirrors Claude account skills via `skills/sync-skills-repo/SKILL.md`.**
    - If you edit anything under `skills/` in git, commit cleanly and remember that the Claude
      account copy should also be updated (otherwise the next `sync-skills-repo` run will pause
@@ -14,8 +24,7 @@ This repository holds reusable instructions (`instructions/`) and agent skills (
      `<!-- embedded-file: scripts/comment_diff_check.py -->` block at the bottom of
      `skills/annotate-code/SKILL.md`.
    - Never edit one without updating the other, keep the executable bit (`chmod +x`) on `#!`
-     scripts, and run `python3 -m unittest discover -s tests -v` before finishing.
-   - Do not leave `__pycache__` directories inside `skills/` (so `cp -r skills/<name>` stays clean).
+     scripts, and do not leave `__pycache__` directories inside `skills/`.
 
 ## Code Comments (Purpose-First Documentation)
 Full standard with examples: **`instructions/COMMENTING.md`**. Read it before writing or editing Python/script code in this repo. Core rules:

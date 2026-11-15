@@ -191,17 +191,5 @@ class TestCliGitIntegration(unittest.TestCase):
             self.assertIn("NEW", res_strict_new.stdout)
 
 
-class TestEmbeddedSyncInvariant(unittest.TestCase):
-    def test_embedded_copy_matches_script_and_is_executable(self) -> None:
-        skill_md = (REPO_ROOT / "skills" / "annotate-code" / "SKILL.md").read_text(encoding="utf-8")
-        marker = "<!-- embedded-file: scripts/comment_diff_check.py -->\n```python\n"
-        start = skill_md.index(marker) + len(marker)
-        end = skill_md.rindex("\n```")
-        embedded = skill_md[start:end] + "\n"
-        actual = SCRIPT_PATH.read_text(encoding="utf-8")
-        self.assertEqual(embedded, actual)
-        self.assertTrue(SCRIPT_PATH.stat().st_mode & 0o111, "comment_diff_check.py should be executable")
-
-
 if __name__ == "__main__":
     unittest.main()
