@@ -1,0 +1,357 @@
+#!/usr/bin/env python3
+"""Verify that a source change touched only comments.
+
+Compares each changed source file against a git revision after stripping comments
+(and, for Python, module/class/function/attribute docstrings) from both versions
+and tokenizing code so whitespace and line-wrapping around comments do not count
+as differences. String and character literals are preserved verbatim (with comments
+stripped inside Kotlin `${...}` template expressions). Any remaining difference
+means code changed.
+
+Usage:
+    python3 comment_diff_check.py                         # all files changed vs HEAD
+    python3 comment_diff_check.py --base main             # compare against another revision
+    python3 comment_diff_check.py --strict path/to/A.kt   # fail on NEW or SKIP files too
+
+Exit status: 0 if every checked file is comment-only (and none were NEW/SKIP under
+--strict), 1 if code changed (or NEW/SKIP under --strict), 2 on usage or git errors.
+
+Supported: Kotlin (.kt, .kts), Rust (.rs), Python (.py). Other files report SKIP.
+New (untracked or added) files have no base version and report NEW.
+"""
+
+import argparse
+import ast
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+C_LIKE = {".kt", ".kts", ".rs"}
+
+# Separates identifiers/numbers from punctuation so wrapping `f(a, b)` across lines
+# to comment individual parameters keeps the exact same token stream, while preserving
+# multi-character operators (`==`, `->`, `?.`, `+=`, `..=`, etc.).
+TOKEN_RE = re.compile(
+    r"\w+|===|!==|==|!=|<=|>=|&&|\|\||->|=>|::|\.\.\.|\.\.=?|<<=?|>>=?|\?[.:]|!!|[+\-*/%&|^]=|\+\+|--|\S"
+)
+
+
+def strip_c_like(src: str, rust: bool) -> list[str]:
+    """Return the code of a Kotlin or Rust file as tokens with comments removed.
+
+    Args:
+        src: Full source text of the file.
+        rust: True for Rust lexical rules (raw `r#""#`/`br#""#`/`cr#""#` strings,
+            lifetimes); False for Kotlin rules (raw `\"\"\"` strings, `${...}` and
+            multi-dollar `$$\"...\"` string templates).
+
+    Returns:
+        Ordered list of code and literal tokens. Block comments nest in both languages.
+    """
+    tokens, _ = _scan_c_like(src, 0, rust=rust, stop_on_rbrace=False)
+    return tokens
+
+
+def _scan_c_like(src: str, i: int, rust: bool, stop_on_rbrace: bool) -> tuple[list[str], int]:
+    """Scan Kotlin/Rust code from index `i`, optionally stopping at a matching `}`."""
+    tokens: list[str] = []
+    buf: list[str] = []
+    n = len(src)
+    brace_depth = 1 if stop_on_rbrace else 0
+
+    def flush() -> None:
+        if buf:
+            tokens.extend(TOKEN_RE.findall("".join(buf)))
+            buf.clear()
+
+    while i < n:
+        c = src[i]
+        two = src[i:i + 2]
+        if two == "//":                                   # line comment (incl. ///, //!)
+            j = src.find("\n", i)
+            i = n if j < 0 else j
+            buf.append(" ")
+        elif two == "/*":                                 # nested block comment
+            depth, i = 1, i + 2
+            while i < n and depth:
+                if src.startswith("/*", i):
+                    depth, i = depth + 1, i + 2
+                elif src.startswith("*/", i):
+                    depth, i = depth - 1, i + 2
+                else:
+                    i += 1
+            buf.append(" ")
+        elif stop_on_rbrace and c == "{":
+            brace_depth += 1
+            buf.append(c)
+            i += 1
+        elif stop_on_rbrace and c == "}":
+            brace_depth -= 1
+            if brace_depth == 0:
+                flush()
+                return tokens, i + 1
+            buf.append(c)
+            i += 1
+        elif not rust and c == "$":                       # Kotlin multi-dollar string `$$"..."`
+            k = i
+            while k < n and src[k] == "$":
+                k += 1
+            is_ident_tail = i > 0 and (src[i - 1].isalnum() or src[i - 1] == "_")
+            if k < n and src[k] == '"' and not is_ident_tail:
+                flush()
+                str_tokens, i = _scan_kotlin_string(src, i, k, k - i)
+                tokens.extend(str_tokens)
+            else:
+                buf.append(src[i:k])
+                i = k
+        elif not rust and c == '"':                       # Kotlin string or raw `"""` string
+            flush()
+            str_tokens, i = _scan_kotlin_string(src, i, i, 1)
+            tokens.extend(str_tokens)
+        elif rust and _rust_raw_prefix_len(src, i) > 0:   # Rust r#"..."#, br#"..."#, cr#"..."#
+            j = _rust_raw_end(src, i)
+            flush()
+            tokens.append(src[i:j])
+            i = j
+        elif rust and c == '"':                           # Rust ordinary string
+            j = i + 1
+            while j < n and src[j] != '"':
+                j += 2 if src[j] == "\\" else 1
+            j = min(n, j + 1)
+            flush()
+            tokens.append(src[i:j])
+            i = j
+        elif c == "'":                                    # char literal or Rust lifetime
+            j = _char_literal_end(src, i)
+            if j > i:
+                flush()
+                tokens.append(src[i:j])
+                i = j
+            else:
+                buf.append(c)
+                i += 1
+        else:
+            buf.append(c)
+            i += 1
+
+    flush()
+    return tokens, i
+
+
+def _scan_kotlin_string(
+    src: str, prefix_start: int, quote_idx: int, interp_dollars: int
+) -> tuple[list[str], int]:
+    """Scan a Kotlin string literal, preserving literal text and tokenizing `${...}` blocks."""
+    n = len(src)
+    triple = src.startswith('"""', quote_idx)
+    j = quote_idx + (3 if triple else 1)
+    seg_start = prefix_start
+    out: list[str] = []
+
+    while j < n:
+        if triple and src.startswith('"""', j):
+            j += 3
+            while j < n and src[j] == '"':                # trailing quotes in `"""foo""""`
+                j += 1
+            out.append(src[seg_start:j])
+            return out, j
+        if not triple and src[j] == '"':
+            j += 1
+            out.append(src[seg_start:j])
+            return out, j
+        if not triple and src[j] == "\\":
+            j += 2
+            continue
+        if src[j] == "$":
+            k = j
+            while k < n and src[k] == "$":
+                k += 1
+            if k < n and src[k] == "{" and (k - j) >= interp_dollars:
+                # Any extra leading `$` characters before the `interp_dollars` opener stay literal.
+                out.append(src[seg_start:k + 1])
+                expr_tokens, j = _scan_c_like(src, k + 1, rust=False, stop_on_rbrace=True)
+                out.extend(expr_tokens)
+                seg_start = j - 1                         # starts closing/next segment at `}`
+                continue
+            j = k
+            continue
+        j += 1
+
+    out.append(src[seg_start:n])
+    return out, n
+
+
+def _char_literal_end(src: str, i: int) -> int:
+    """Return index past closing `'` if `src[i:]` starts a char literal, else `i`."""
+    n = len(src)
+    if i + 2 >= n or src[i] != "'":
+        return i
+    if src[i + 1] == "\\":
+        j = i + 3                                         # past opening `'`, `\`, and escaped char
+        while j < n and src[j] not in ("'", "\n") and j - i <= 14:
+            j += 1
+        return j + 1 if j < n and src[j] == "'" else i
+    if src[i + 1] not in ("'", "\n") and src[i + 2] == "'":
+        return i + 3
+    return i
+
+
+def _rust_raw_prefix_len(src: str, i: int) -> int:
+    """Length of a Rust raw string prefix (`r`, `br`, `cr`) at `i`, or 0 if not one."""
+    if i > 0 and (src[i - 1].isalnum() or src[i - 1] == "_"):
+        return 0
+    plen = 2 if src.startswith(("br", "cr"), i) else (1 if src[i] == "r" else 0)
+    if plen == 0:
+        return 0
+    j = i + plen
+    while j < len(src) and src[j] == "#":
+        j += 1
+    return plen if j < len(src) and src[j] == '"' else 0
+
+
+def _rust_raw_end(src: str, i: int) -> int:
+    """Index just past the Rust raw string literal starting at `i`."""
+    j = i + _rust_raw_prefix_len(src, i)
+    hashes = 0
+    while src[j] == "#":
+        hashes, j = hashes + 1, j + 1
+    end = src.find('"' + "#" * hashes, j + 1)
+    return len(src) if end < 0 else end + 1 + hashes
+
+
+def _is_str_expr(stmt: ast.stmt) -> bool:
+    """True if `stmt` is a bare string literal statement (`Expr(Constant(str))`)."""
+    return (
+        isinstance(stmt, ast.Expr)
+        and isinstance(getattr(stmt, "value", None), ast.Constant)
+        and isinstance(stmt.value.value, str)
+    )
+
+
+def strip_python(src: str) -> list[str]:
+    """Return canonical indented AST lines with docstrings removed.
+
+    Strips module, class, and function docstrings (`body[0]`), plus PEP 257 /
+    dataclass attribute docstrings (a bare string literal immediately following an
+    assignment or annotated assignment in a module or class body). Comments never
+    enter the AST.
+    """
+    tree = ast.parse(src)
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            orig = node.body
+            allow_attr_docs = isinstance(node, (ast.Module, ast.ClassDef))
+            cleaned: list[ast.stmt] = []
+            for idx, stmt in enumerate(orig):
+                if idx == 0 and _is_str_expr(stmt):
+                    continue
+                if (
+                    allow_attr_docs
+                    and idx > 0
+                    and _is_str_expr(stmt)
+                    and isinstance(orig[idx - 1], (ast.Assign, ast.AnnAssign))
+                ):
+                    continue
+                cleaned.append(stmt)
+            node.body = cleaned or [ast.Pass()]
+    return ast.dump(tree, include_attributes=False, indent=2).splitlines()
+
+
+def code_only(path: str, src: str) -> tuple[str, list[str]] | None:
+    """Return `('tokens' | 'ast', items)` for supported files, or `None` if unsupported."""
+    ext = Path(path).suffix
+    if ext in C_LIKE:
+        return ("tokens", strip_c_like(src, rust=(ext == ".rs")))
+    if ext == ".py":
+        return ("ast", strip_python(src))
+    return None
+
+
+def git(*args: str) -> str:
+    """Run a read-only git command and return stdout."""
+    return subprocess.run(
+        ["git", "--no-optional-locks", *args],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+
+
+def first_divergence(kind: str, a: list[str], b: list[str]) -> str:
+    """Format a short snippet around the first differing token or AST line."""
+    for k, (x, y) in enumerate(zip(a, b)):
+        if x != y:
+            if kind == "ast":
+                return f"  base AST:    {x.strip()}\n  current AST: {y.strip()}"
+            return (
+                f"  base:    ...{' '.join(a[max(0, k - 6):k + 6])}...\n"
+                f"  current: ...{' '.join(b[max(0, k - 6):k + 6])}..."
+            )
+    unit = "AST lines" if kind == "ast" else "tokens"
+    return f"  {unit} differ in length ({len(a)} vs {len(b)}): code added or removed at the end"
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("paths", nargs="*", help="files to check (default: all changed vs base)")
+    ap.add_argument("--base", default="HEAD", help="git revision to compare against")
+    ap.add_argument(
+        "--strict",
+        action="store_true",
+        help="fail if any checked path is NEW (no base version) or SKIP (unsupported file type)",
+    )
+    args = ap.parse_args()
+
+    try:
+        root = git("rev-parse", "--show-toplevel").strip()
+        paths = args.paths or [p for p in git("diff", "--name-only", args.base).splitlines() if p]
+    except subprocess.CalledProcessError as e:
+        print(f"git error: {e.stderr.strip()}", file=sys.stderr)
+        return 2
+
+    if not paths:
+        print("No changed files.")
+        return 0
+
+    failed = False
+    for p in paths:
+        rel = str(Path(p).resolve().relative_to(root)) if Path(p).exists() else p
+        cur_path = Path(root) / rel
+        if not cur_path.exists():
+            print(f"DELETED  {rel}  (deleting a file is not comment-only)")
+            failed = True
+            continue
+        current = cur_path.read_text(encoding="utf-8")
+        try:
+            base = git("show", f"{args.base}:{rel}")
+        except subprocess.CalledProcessError:
+            suffix = "  [FAIL under --strict]" if args.strict else ""
+            print(f"NEW      {rel}  (no base version; not checked){suffix}")
+            if args.strict:
+                failed = True
+            continue
+        try:
+            parsed_a, parsed_b = code_only(rel, base), code_only(rel, current)
+        except SyntaxError as e:
+            print(f"FAIL     {rel}  (does not parse: {e})")
+            failed = True
+            continue
+        if parsed_a is None or parsed_b is None:
+            suffix = "  [FAIL under --strict]" if args.strict else ""
+            print(f"SKIP     {rel}  (unsupported file type){suffix}")
+            if args.strict:
+                failed = True
+        elif parsed_a == parsed_b:
+            print(f"OK       {rel}  (comment-only)")
+        else:
+            kind, a = parsed_a
+            _, b = parsed_b
+            print(f"FAIL     {rel}  (code changed)")
+            print(first_divergence(kind, a, b))
+            failed = True
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
