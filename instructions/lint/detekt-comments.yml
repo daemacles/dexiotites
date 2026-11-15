@@ -1,0 +1,47 @@
+# Tier 1 documentation enforcement for Kotlin (detekt 2.0).
+#
+# Use with `buildUponDefaultConfig = true` (Gradle) or `--build-upon-default-config` (CLI).
+# Turns on detekt's documentation rules and turns every other rule set off, so adopting
+# this file enforces the commenting standard (docs/COMMENTING.md) without importing
+# detekt's style and complexity policy. Delete an `active: false` line below to opt in
+# to that rule set.
+#
+# Matches COMMENTING.md section 6 (Kotlin):
+#   - Public classes, functions and properties need KDoc.
+#   - OutdatedDocumentation keeps @param/@property tags in step with the signature and
+#     enforces @property for visible constructor properties, @param for private ones.
+#   - Comments on private declarations are allowed (the standard wants them).
+#   - Test sources are excluded by detekt's default `excludes` patterns.
+
+comments:
+  active: true
+  UndocumentedPublicClass:
+    active: true
+  UndocumentedPublicFunction:
+    active: true
+  UndocumentedPublicProperty:
+    active: true
+  OutdatedDocumentation:
+    active: true
+    allowParamOnConstructorProperties: false
+  DocumentationOverPrivateFunction:
+    active: false
+  DocumentationOverPrivateProperty:
+    active: false
+
+complexity:
+  active: false
+coroutines:
+  active: false
+empty-blocks:
+  active: false
+exceptions:
+  active: false
+naming:
+  active: false
+performance:
+  active: false
+potential-bugs:
+  active: false
+style:
+  active: false

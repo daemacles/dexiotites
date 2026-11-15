@@ -43,6 +43,10 @@ folders with no `__pycache__`) are enforced automatically by `tests/test_repo_hy
 - **Rule ↔ example cross-check:** Re-read every worked example in the file against every rule you
   added or changed in the same edit.
   *(Prevents contradictions such as mandating `@property` in rules while using `@param` in the example.)*
+- **Lint config ↔ guide cross-check:** When a rule in `COMMENTING.md` changes, check the matching
+  config in `instructions/lint/` and its fixtures in `tests/fixtures/lint/` (e.g. the `@property`
+  vs `@param` rule is also `OutdatedDocumentation.allowParamOnConstructorProperties`).
+  *(Prevents the linter enforcing a different rule from the one the guide states.)*
 - **Anti-boilerplate & inheritance clauses:** Whenever requiring multi-part doc comments (side
   effects, errors, calling contract), state *"omit when pure, infallible, and unrestricted"* so
   literal models do not emit `"Side effects: none"` noise, and specify behavior for `override` /
@@ -65,6 +69,12 @@ folders with no `__pycache__`) are enforced automatically by `tests/test_repo_hy
      (`'\\'`, `'\''`, `'\u0027'`).
   4. Exit codes and agent instructions when a target file is untracked (`NEW`) or an unsupported
      language (`SKIP`).
+  5. Line breaks the language treats as meaningful (Kotlin statement ends outside `()`/`[]`), and
+     comment syntaxes that collide with operators (Lua `--` vs `//` floor division; `]]` inside a
+     Lua long comment).
+- **Adding a language:** extend `code_only`, add the language to `COMMENTING.md` §6 and §8, add a
+  config in `instructions/lint/` with good/bad fixtures and a test in `tests/test_lint_configs.py`.
+  The hygiene tests check that README and `annotate-code` list every supported extension.
 
 ## 5. Evolving this file
 

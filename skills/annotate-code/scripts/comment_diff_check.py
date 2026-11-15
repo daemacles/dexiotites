@@ -8,6 +8,10 @@ as differences. String and character literals are preserved verbatim (with comme
 stripped inside Kotlin `${...}` template expressions). Any remaining difference
 means code changed.
 
+Line breaks are ignored except where the language gives them meaning: in Kotlin, a
+line break outside `(...)` and `[...]` can end a statement, so it is kept as a token
+there and moving code across such a break counts as a code change.
+
 Usage:
     python3 comment_diff_check.py                         # all files changed vs HEAD
     python3 comment_diff_check.py --base main             # compare against another revision
@@ -16,9 +20,12 @@ Usage:
 Exit status: 0 if every checked file is comment-only (and none were NEW/SKIP under
 --strict), 1 if code changed (or NEW/SKIP under --strict), 2 on usage or git errors.
 
-Supported: Kotlin (.kt, .kts), Rust (.rs), Python (.py). Other files report SKIP.
-New (untracked or added) files have no base version and report NEW.
+Supported: Kotlin (.kt, .kts), Rust (.rs), Python (.py), Lua (.lua). Other files
+report SKIP. New (untracked or added) files have no base version and report NEW.
+Requires Python 3.9 or newer.
 """
+
+from __future__ import annotations
 
 import argparse
 import ast
@@ -28,13 +35,18 @@ import sys
 from pathlib import Path
 
 C_LIKE = {".kt", ".kts", ".rs"}
+LUA = {".lua"}
 
 # Separates identifiers/numbers from punctuation so wrapping `f(a, b)` across lines
 # to comment individual parameters keeps the exact same token stream, while preserving
-# multi-character operators (`==`, `->`, `?.`, `+=`, `..=`, etc.).
+# multi-character operators (`==`, `->`, `?.`, `+=`, `..=`, `~=`, etc.).
 TOKEN_RE = re.compile(
-    r"\w+|===|!==|==|!=|<=|>=|&&|\|\||->|=>|::|\.\.\.|\.\.=?|<<=?|>>=?|\?[.:]|!!|[+\-*/%&|^]=|\+\+|--|\S"
+    r"\w+|===|!==|==|!=|~=|<=|>=|&&|\|\||->|=>|::|\.\.\.|\.\.=?|<<=?|>>=?|\?[.:]|!!|[+\-*/%&|^]=|\+\+|--|\S"
 )
+
+# Token standing for a meaningful (Kotlin statement-separating) line break. No code or
+# literal token can equal it: TOKEN_RE never matches whitespace, and literals keep quotes.
+NL = "\n"
 
 
 def strip_c_like(src: str, rust: bool) -> list[str]:
@@ -43,27 +55,50 @@ def strip_c_like(src: str, rust: bool) -> list[str]:
     Args:
         src: Full source text of the file.
         rust: True for Rust lexical rules (raw `r#""#`/`br#""#`/`cr#""#` strings,
-            lifetimes); False for Kotlin rules (raw `\"\"\"` strings, `${...}` and
-            multi-dollar `$$\"...\"` string templates).
+            lifetimes); False for Kotlin rules (triple-quoted raw strings, `${...}` and
+            multi-dollar string templates, meaningful line breaks).
 
     Returns:
         Ordered list of code and literal tokens. Block comments nest in both languages.
+        For Kotlin, each run of meaningful line breaks becomes one `NL` token, so adding
+        comment lines between statements does not change the stream.
     """
     tokens, _ = _scan_c_like(src, 0, rust=rust, stop_on_rbrace=False)
-    return tokens
+    if rust:
+        return tokens
+    collapsed: list[str] = []
+    for tok in tokens:
+        if tok == NL and (not collapsed or collapsed[-1] == NL):
+            continue
+        collapsed.append(tok)
+    while collapsed and collapsed[-1] == NL:
+        collapsed.pop()
+    return collapsed
 
 
 def _scan_c_like(src: str, i: int, rust: bool, stop_on_rbrace: bool) -> tuple[list[str], int]:
-    """Scan Kotlin/Rust code from index `i`, optionally stopping at a matching `}`."""
+    """Scan Kotlin/Rust code from index `i`, optionally stopping at a matching `}`.
+
+    For Kotlin, tracks open `(`, `[` and `{` so a line break emits an `NL` token only
+    where Kotlin treats it as a possible statement end: at top level or directly inside
+    `{...}` (class, function and lambda bodies), but not inside `(...)` or `[...]`.
+    """
     tokens: list[str] = []
     buf: list[str] = []
     n = len(src)
     brace_depth = 1 if stop_on_rbrace else 0
+    open_brackets: list[str] = []                          # Kotlin only
 
     def flush() -> None:
         if buf:
             tokens.extend(TOKEN_RE.findall("".join(buf)))
             buf.clear()
+
+    def track(ch: str) -> None:
+        if ch in "([{":
+            open_brackets.append(ch)
+        elif ch in ")]}" and open_brackets:
+            open_brackets.pop()
 
     while i < n:
         c = src[i]
@@ -84,6 +119,7 @@ def _scan_c_like(src: str, i: int, rust: bool, stop_on_rbrace: bool) -> tuple[li
             buf.append(" ")
         elif stop_on_rbrace and c == "{":
             brace_depth += 1
+            track(c)
             buf.append(c)
             i += 1
         elif stop_on_rbrace and c == "}":
@@ -91,7 +127,12 @@ def _scan_c_like(src: str, i: int, rust: bool, stop_on_rbrace: bool) -> tuple[li
             if brace_depth == 0:
                 flush()
                 return tokens, i + 1
+            track(c)
             buf.append(c)
+            i += 1
+        elif not rust and c == "\n" and (not open_brackets or open_brackets[-1] == "{"):
+            flush()                                       # Kotlin: possible statement end
+            tokens.append(NL)
             i += 1
         elif not rust and c == "$":                       # Kotlin multi-dollar string `$$"..."`
             k = i
@@ -132,6 +173,8 @@ def _scan_c_like(src: str, i: int, rust: bool, stop_on_rbrace: bool) -> tuple[li
                 buf.append(c)
                 i += 1
         else:
+            if not rust:
+                track(c)
             buf.append(c)
             i += 1
 
@@ -220,6 +263,85 @@ def _rust_raw_end(src: str, i: int) -> int:
     return len(src) if end < 0 else end + 1 + hashes
 
 
+def strip_lua(src: str) -> list[str]:
+    r"""Return the code of a Lua file as tokens with comments removed.
+
+    Follows the Lua 5.1-5.4 lexical rules: `--` line comments; `--[[...]]` and
+    `--[==[...]==]` long comments, which do not nest; single- or double-quoted strings
+    with backslash escapes (including `\z`, which skips the following whitespace); and
+    `[[...]]` / `[==[...]==]` long strings. Strings are kept verbatim as single tokens.
+    `//` is floor division (Lua 5.3+), never a comment. Line breaks carry no meaning in
+    Lua, so line wrapping does not count as a change.
+
+    Args:
+        src: Full source text of the file.
+
+    Returns:
+        Ordered list of code and literal tokens.
+    """
+    tokens: list[str] = []
+    buf: list[str] = []
+    i, n = 0, len(src)
+
+    def flush() -> None:
+        if buf:
+            tokens.extend(TOKEN_RE.findall("".join(buf)))
+            buf.clear()
+
+    while i < n:
+        c = src[i]
+        if src.startswith("--", i):
+            level = _lua_long_bracket_level(src, i + 2)
+            if level >= 0:                                # long comment --[==[ ... ]==]
+                close = "]" + "=" * level + "]"
+                j = src.find(close, i + 4 + level)
+                i = n if j < 0 else j + len(close)
+            else:                                         # line comment
+                j = src.find("\n", i)
+                i = n if j < 0 else j
+            buf.append(" ")
+        elif c == "[" and _lua_long_bracket_level(src, i) >= 0:
+            level = _lua_long_bracket_level(src, i)      # long string [==[ ... ]==]
+            close = "]" + "=" * level + "]"
+            j = src.find(close, i + 2 + level)
+            j = n if j < 0 else j + len(close)
+            flush()
+            tokens.append(src[i:j])
+            i = j
+        elif c in ("'", '"'):                             # short string
+            j = i + 1
+            while j < n and src[j] != c and src[j] != "\n":
+                if src[j] == "\\":
+                    if src.startswith("\\z", j):
+                        j += 2
+                        while j < n and src[j].isspace():
+                            j += 1
+                        continue
+                    j += 2
+                    continue
+                j += 1
+            j = min(n, j + 1)
+            flush()
+            tokens.append(src[i:j])
+            i = j
+        else:
+            buf.append(c)
+            i += 1
+
+    flush()
+    return tokens
+
+
+def _lua_long_bracket_level(src: str, i: int) -> int:
+    """Return the level of a Lua opening long bracket (`[`, `=` * level, `[`) at `i`, else -1."""
+    if i >= len(src) or src[i] != "[":
+        return -1
+    j = i + 1
+    while j < len(src) and src[j] == "=":
+        j += 1
+    return j - i - 1 if j < len(src) and src[j] == "[" else -1
+
+
 def _is_str_expr(stmt: ast.stmt) -> bool:
     """True if `stmt` is a bare string literal statement (`Expr(Constant(str))`)."""
     return (
@@ -263,6 +385,8 @@ def code_only(path: str, src: str) -> tuple[str, list[str]] | None:
     ext = Path(path).suffix
     if ext in C_LIKE:
         return ("tokens", strip_c_like(src, rust=(ext == ".rs")))
+    if ext in LUA:
+        return ("tokens", strip_lua(src))
     if ext == ".py":
         return ("ast", strip_python(src))
     return None
@@ -280,19 +404,23 @@ def git(*args: str) -> str:
 
 def first_divergence(kind: str, a: list[str], b: list[str]) -> str:
     """Format a short snippet around the first differing token or AST line."""
+    def show(toks: list[str]) -> str:
+        return " ".join("<line break>" if t == NL else t for t in toks)
+
     for k, (x, y) in enumerate(zip(a, b)):
         if x != y:
             if kind == "ast":
                 return f"  base AST:    {x.strip()}\n  current AST: {y.strip()}"
             return (
-                f"  base:    ...{' '.join(a[max(0, k - 6):k + 6])}...\n"
-                f"  current: ...{' '.join(b[max(0, k - 6):k + 6])}..."
+                f"  base:    ...{show(a[max(0, k - 6):k + 6])}...\n"
+                f"  current: ...{show(b[max(0, k - 6):k + 6])}..."
             )
     unit = "AST lines" if kind == "ast" else "tokens"
     return f"  {unit} differ in length ({len(a)} vs {len(b)}): code added or removed at the end"
 
 
 def main() -> int:
+    """Check each path (default: files changed vs `--base`); return the exit status in the module doc."""
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("paths", nargs="*", help="files to check (default: all changed vs base)")
     ap.add_argument("--base", default="HEAD", help="git revision to compare against")

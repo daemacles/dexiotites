@@ -20,11 +20,13 @@ This repository holds reusable instructions (`instructions/`) and agent skills (
      account copy should also be updated (otherwise the next `sync-skills-repo` run will pause
      and ask to merge).
 3. **Embedded helper files must stay byte-for-byte identical.**
-   - `skills/annotate-code/scripts/comment_diff_check.py` is generated from the
-     `<!-- embedded-file: scripts/comment_diff_check.py -->` block at the bottom of
-     `skills/annotate-code/SKILL.md`.
+   - `skills/annotate-code/scripts/comment_diff_check.py` and
+     `skills/sync-skills-repo/scripts/sync_classify.py` are generated from the
+     `<!-- embedded-file: scripts/... -->` block at the bottom of their skill's `SKILL.md`.
    - Never edit one without updating the other, keep the executable bit (`chmod +x`) on `#!`
      scripts, and do not leave `__pycache__` directories inside `skills/`.
+4. **`skills/.sync-base.json` is written only by `sync_classify.py --record`.** It records the
+   account version each repo copy was last synced from; never edit it by hand.
 
 ## Code Comments (Purpose-First Documentation)
 Full standard with examples: **`instructions/COMMENTING.md`**. Read it before writing or editing Python/script code in this repo. Core rules:
@@ -32,3 +34,4 @@ Full standard with examples: **`instructions/COMMENTING.md`**. Read it before wr
 - **Required:** a header on every file; a doc comment on every non-trivial type and function (purpose, parameters with units/ranges, return value, plus side effects, failure behavior, and calling contract where present/non-obvious). Omit `"None"` boilerplate on pure helpers.
 - **Never invent rationale:** cite the source, derive it from the code, or write `RATIONALE-UNKNOWN: <question>`.
 - **Keep comments true:** any code change updates the comments describing it in the same edit.
+- **Doc linter gate:** `ruff check --select D .` must pass (the test suite runs it when ruff is installed).

@@ -2,11 +2,12 @@
 
 This guide is for AI coding agents and the humans who review their work. It applies to all
 source in the project it is installed in (conventionally at `docs/COMMENTING.md`). Language-specific
-rules for Kotlin, Rust and Python are in section 6.
+rules for Kotlin, Rust, Python and Lua are in section 6; the linters that enforce the
+mechanical part of this guide are in section 8.
 
 ## 1. Who the comments are for
 
-The reader is an experienced engineer who can read Kotlin, Python and Rust well enough to
+The reader is an experienced engineer who can read Kotlin, Rust, Python and Lua well enough to
 follow any line. What they lack is time. **Comments exist so the reader can understand what a
 file, type or function is *for*, and how to call it, without reading its body.**
 
@@ -29,6 +30,8 @@ what consumes its output, and the main types it defines. A few sentences, not an
 - Kotlin: a `/* ... */` block above `package`.
 - Rust: `//!` module docs.
 - Python: a module docstring.
+- Lua: a `--` comment block (or `--[[ ... ]]`) at the top, followed by a blank line. Not `---`,
+  which marks a doc comment for the next declaration.
 
 ### 2.2 Types (classes, interfaces, objects, enums, data classes, structs, traits)
 Every non-trivial type, **including private ones**, gets a doc comment stating:
@@ -129,6 +132,19 @@ A "why" comment is a factual claim about someone's intent. Agents must not make 
   dataclass fields in the class docstring's `Attributes:` section, `#` comments, or attribute
   docstrings immediately below the field.
 
+### Lua
+- Doc comments are `---` lines directly above the declaration, using LuaLS (LuaCATS)
+  annotations: a description, then `---@param name type description` for each parameter (`name?`
+  when it may be `nil`), and `---@return type name description` for each return value, one line
+  per value. Describe a table's shape with `---@class Name` and one `---@field name type
+  description` per field.
+- Keep plain `--` for file headers and implementation comments; `---` is read as documentation.
+- State the failure convention for every fallible function: whether it raises with `error()` or
+  returns `nil, message`. Callers cannot tell from the signature.
+- **A long comment ends at the first matching bracket.** `--[[ ... ]]` stops at the first `]]`
+  (for example in `t[a[1]]`), and long comments don't nest. If the text contains `]]`, use a
+  level: `--[==[ ... ]==]`.
+
 ## 7. Example (Kotlin, from the GneissFind project)
 
 Before: generated code. The doc lists spec numbers, says nothing about parameters or return value, and leaves the threading contract out.
@@ -163,7 +179,29 @@ After: purpose first, constants linked rather than copied, contract stated.
  */
 ```
 
-## 8. Retrofitting existing code
+## 8. Enforcement with doc linters (Tier 1)
+
+Linters check the mechanical part of this guide, so agents don't have to remember it:
+public declarations have doc comments, documented parameters match the signature, and
+`unsafe` blocks have `SAFETY:` comments. Whether a comment is *useful* (purpose, units, sourced
+rationale) remains a matter for this guide and for review. Ready-made configurations are in the
+dexiotites repo under `instructions/lint/`:
+
+| Language | Tool and config | Finish-gate command (must pass) |
+|---|---|---|
+| Kotlin | detekt 2.0, `detekt-comments.yml` | `./gradlew detekt` |
+| Rust | rustc, clippy and rustdoc lints, `rust-cargo-lints.toml` | `cargo clippy --all-targets -- -D warnings` and `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` |
+| Python | ruff (pydocstyle, Google convention), `ruff-docstrings.toml` | `ruff check --select D .` |
+| Lua | lua-language-server (LuaLS), `luarc-docs.json` | `lua-language-server --check=. --checklevel=Warning --configpath=.luarc.json` |
+
+- **New projects:** the gate must pass before you finish any change.
+- **Projects that adopted the linter after code existed:** fix every finding in the files you
+  changed; pre-existing findings elsewhere are not part of your change. (Kotlin projects record
+  them in a detekt baseline file instead.)
+- Fix findings by writing real documentation. Never satisfy a linter with placeholder text, and
+  never suppress a finding unless the user agrees.
+
+## 9. Retrofitting existing code
 
 Use the `annotate-code` skill. In short: **change comments only**, verify the change with the
 skill's `comment_diff_check.py` script, and report, rather than fix, any suspected bugs you notice.
@@ -183,6 +221,7 @@ These are well known for comments that teach the reader. They are worth browsing
 | `kotlinx.coroutines` | Kotlin | Thorough KDoc on concurrency contracts: cancellation, threading, and exception behavior. |
 | AndroidX (Jetpack) | Kotlin | Follows the AndroidX KDoc guideline that every parameter and property is documented. |
 | PostgreSQL (`src/backend/access/nbtree/README` and neighbors) | C | Per-subsystem design READMEs next to the code: design comments at directory scale. |
+| Neovim (`runtime/lua/vim/`) | Lua | Public functions documented with LuaLS annotations from a fixed template; the help pages are generated from them. |
 
 ## References (for the human reader)
 
@@ -210,3 +249,15 @@ These are well known for comments that teach the reader. They are worth browsing
 9. JetBrains, "Document Kotlin code: KDoc." https://kotlinlang.org/docs/kotlin-doc.html
 10. Android Open Source Project, "Kotlin documentation (KDoc) guidelines" (AndroidX).
     https://android.googlesource.com/platform/frameworks/support/+/HEAD/docs/kdoc_guidelines.md
+11. LuaLS, "Annotations" (the LuaCATS format used in section 6).
+    https://luals.github.io/wiki/annotations/
+12. Neovim, "Lua documentation" developer guidelines (`:help dev-lua-doc`): the template Neovim
+    uses for Lua function docs.
+13. Ierusalimschy, R., de Figueiredo, L. H., Celes, W. *Lua 5.4 Reference Manual*, §3.1
+    "Lexical Conventions" (comments and long brackets). https://www.lua.org/manual/5.4/manual.html#3.1
+14. detekt, "Comments rule set." https://detekt.dev/docs/rules/comments
+15. Clippy lint list (`missing_errors_doc`, `missing_panics_doc`, `missing_safety_doc`,
+    `undocumented_unsafe_blocks`). https://rust-lang.github.io/rust-clippy/master/
+16. Ruff, pydocstyle rules and the `convention` setting. https://docs.astral.sh/ruff/rules/#pydocstyle-d
+17. LuaLS, "Diagnostics" (`missing-global-doc`, `missing-local-export-doc`,
+    `incomplete-signature-doc`). https://luals.github.io/wiki/diagnostics/

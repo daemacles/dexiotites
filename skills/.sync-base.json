@@ -1,0 +1,22 @@
+{
+  "annotate-code": {
+    "account_updated_at": "2026-11-14T21:36:35.874165Z",
+    "sha256": "ede755f966465516dd45a33f65af294b18d5c608153bc0d35f7c3886496b1d57"
+  },
+  "distill-spec": {
+    "account_updated_at": "2026-10-16T05:01:23.102519Z",
+    "sha256": "e51d1fdf98ae96d947b84481eedb97244d7d882fc042d317b86b6ad26af178db"
+  },
+  "prompt-guide-update": {
+    "account_updated_at": "2026-11-08T04:32:42.183907Z",
+    "sha256": "19e9ebbeb87b627fd6596bfa967707edbd59e0475534799de44be6a3b1d8ca27"
+  },
+  "prompt-lint": {
+    "account_updated_at": "2026-11-07T20:14:01.559826Z",
+    "sha256": "d937eb103dbea4cc513792e14db6482f972cca97b583e899a2243184d3f31fb5"
+  },
+  "sync-skills-repo": {
+    "account_updated_at": "2026-11-14T22:03:35.451818Z",
+    "sha256": "c4de987a7d15a25b3426eea4420ee5a00d15ff5e9486b132a12a39a27dc5bd7a"
+  }
+}

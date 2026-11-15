@@ -5,8 +5,11 @@ across all skills, embedded scripts, documentation tables, and tracked text file
 so lower-tier models cannot introduce structural drift.
 """
 
+from __future__ import annotations
+
 import json
 import re
+import shutil
 import subprocess
 import sys
 import unittest
@@ -16,6 +19,8 @@ sys.dont_write_bytecode = True
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SKILLS_DIR = REPO_ROOT / "skills"
+LINT_DIR = REPO_ROOT / "instructions" / "lint"
+CHECKER_DIR = SKILLS_DIR / "annotate-code" / "scripts"
 
 EMBEDDED_RE = re.compile(
     r"<!-- embedded-file: ([^\s>]+) -->\n```[^\n]*\n(.*?)\n```",
@@ -176,6 +181,55 @@ class TestRepoHygiene(unittest.TestCase):
                     json.loads(data.decode("utf-8"))
                 except json.JSONDecodeError as exc:
                     self.fail(f"Invalid JSON in {path.relative_to(REPO_ROOT)}: {exc}")
+
+
+    def test_checker_languages_are_documented_everywhere(self) -> None:
+        """Every extension the checker supports appears wherever supported types are listed."""
+        sys.path.insert(0, str(CHECKER_DIR))
+        try:
+            import comment_diff_check as cdc
+        finally:
+            sys.path.remove(str(CHECKER_DIR))
+        supported = sorted(cdc.C_LIKE | cdc.LUA | {".py"})
+        for ext in supported:
+            self.assertIsNotNone(cdc.code_only("x" + ext, ""), f"code_only does not handle {ext}")
+        places = {
+            "README.md": (REPO_ROOT / "README.md").read_text(encoding="utf-8"),
+            "skills/annotate-code/SKILL.md": (SKILLS_DIR / "annotate-code" / "SKILL.md").read_text(encoding="utf-8"),
+        }
+        for name, text in places.items():
+            for ext in supported:
+                self.assertIn(f"`{ext}`", text, f"{name} does not list supported extension {ext}")
+
+    def test_lint_configs_are_documented_and_tested(self) -> None:
+        """Each file in instructions/lint/ is referenced by the README, the guide, and the lint tests."""
+        configs = sorted(p.name for p in LINT_DIR.iterdir() if p.is_file())
+        self.assertGreater(len(configs), 0)
+        texts = {
+            "README.md": (REPO_ROOT / "README.md").read_text(encoding="utf-8"),
+            "instructions/COMMENTING.md": (REPO_ROOT / "instructions" / "COMMENTING.md").read_text(encoding="utf-8"),
+            "tests/test_lint_configs.py": (REPO_ROOT / "tests" / "test_lint_configs.py").read_text(encoding="utf-8"),
+        }
+        for cfg in configs:
+            for name, text in texts.items():
+                self.assertIn(cfg, text, f"{name} does not mention instructions/lint/{cfg}")
+
+    def test_toml_files_parse(self) -> None:
+        """TOML configs parse (needs Python 3.11+ for tomllib; skipped otherwise)."""
+        try:
+            import tomllib
+        except ImportError:
+            self.skipTest("tomllib needs Python 3.11+")
+        for path in [*LINT_DIR.glob("*.toml"), REPO_ROOT / "ruff.toml"]:
+            with path.open("rb") as f:
+                tomllib.load(f)
+
+    @unittest.skipUnless(shutil.which("ruff"), "ruff not available")
+    def test_repo_python_passes_its_own_doc_linter(self) -> None:
+        """This repo's Python meets the same docstring gate it ships (instructions/lint/)."""
+        res = subprocess.run(["ruff", "check", "--no-cache", "--select", "D", "."], cwd=REPO_ROOT,
+                             capture_output=True, text=True)
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
 
 
 if __name__ == "__main__":

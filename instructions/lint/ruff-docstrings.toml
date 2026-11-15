@@ -1,0 +1,27 @@
+# Tier 1 documentation enforcement for Python (ruff).
+#
+# Standalone: save as `ruff.toml` in the project root. With an existing ruff setup, merge
+# these tables into it (in pyproject.toml, prefix each table name with `tool.ruff.`, e.g.
+# `[tool.ruff.lint.pydocstyle]`).
+#
+# Finish gate (docstring rules only, so ruff's other default rules don't block):
+#   ruff check --select D .
+#
+# Matches COMMENTING.md section 6 (Python):
+#   - D1xx: public modules, classes, methods and functions need docstrings.
+#   - Google convention, including D417: when a docstring has an `Args:` section, it must
+#     describe every parameter. (D417 can't require the section itself; the commenting
+#     standard and the annotate-code skill cover that.)
+#   - Test files need a module docstring (file header) but not per-function docstrings.
+#   - Stable rules only; ruff's DOC (pydoclint) rules are preview-only and left out.
+
+[lint]
+extend-select = ["D"]
+
+[lint.pydocstyle]
+convention = "google"
+
+[lint.per-file-ignores]
+"**/tests/**" = ["D101", "D102", "D103", "D104", "D105", "D106", "D107"]
+"**/test_*.py" = ["D101", "D102", "D103", "D104", "D105", "D106", "D107"]
+"**/*_test.py" = ["D101", "D102", "D103", "D104", "D105", "D106", "D107"]
