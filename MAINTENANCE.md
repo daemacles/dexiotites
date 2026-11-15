@@ -2,8 +2,9 @@
 
 This checklist guards against semantic and cross-agent regressions that lower-tier models
 commonly miss. Mechanical invariants (embedded-file byte parity, `#!` executable bits, valid
-`SKILL.md` frontmatter, `README.md` skill-table coverage, trailing newlines, and clean skill
-folders with no `__pycache__`) are enforced automatically by `tests/test_repo_hygiene.py`.
+`SKILL.md` frontmatter, `README.md` skill-table coverage and external-requirements column,
+trailing newlines, and clean skill folders with no `__pycache__`) are enforced automatically by
+`tests/test_repo_hygiene.py`.
 
 **Required gate on every edit:**
 1. Read and check every section below that matches what you touched.

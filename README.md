@@ -157,10 +157,10 @@ undocumented function the first time you use it.
 
 Reusable across coding repositories and agent harnesses (Antigravity, Claude Code, Claude Desktop):
 
-| Skill | What it does |
-|---|---|
-| `annotate-code` | Comment-only retrofit of existing code (Kotlin, Rust, Python, Lua) to `COMMENTING.md`, verified by `scripts/comment_diff_check.py` and the project's doc linter. |
-| `distill-spec` | Distills a finished working conversation into a standalone RFC-2119 functional spec (with cold-read subagent check and optional evaluation harness). |
+| Skill | What it does | External requirements |
+|---|---|---|
+| `annotate-code` | Comment-only retrofit of existing code (Kotlin, Rust, Python, Lua) to `COMMENTING.md`, verified by `scripts/comment_diff_check.py` and the project's doc linter. | The project's `COMMENTING.md`; git, with target files committed (the checker compares against `HEAD`); Python 3.9+. The project's build command and doc linter (detekt, `cargo clippy`/`cargo doc`, ruff, or lua-language-server; see [(c)](#c-doc-linters-tier-1)) when the project has them. |
+| `distill-spec` | Distills a finished working conversation into a standalone RFC-2119 functional spec (with cold-read subagent check and optional evaluation harness). | Subagent tool for the cold-read test (optional; falls back to asking you to paste the spec into a fresh chat). Past-chats tool or session transcript to re-read summarized turns (optional; unreachable turns are marked as gaps). |
 
 ### Personal workflow & maintenance skills
 

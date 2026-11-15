@@ -151,6 +151,27 @@ class TestRepoHygiene(unittest.TestCase):
             "Skills listed under `## Skills` in README.md must match `skills/*/` directories",
         )
 
+    def test_readme_skills_tables_list_external_requirements(self) -> None:
+        """Every README skills table has a filled-in External requirements column.
+
+        MAINTENANCE.md §1 (dependency audit) has authors list each skill's connectors, CLI
+        tools and external skills in that column.
+        """
+        readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+        skills_section = readme.split("\n## Skills\n", 1)[1].split("\n## ", 1)[0]
+        headers = re.findall(r"^\|\s*Skill\s*\|.*$", skills_section, re.MULTILINE)
+        self.assertTrue(headers, "No skills table found under `## Skills` in README.md")
+        for header in headers:
+            self.assertEqual(
+                [c.strip() for c in header.strip().strip("|").split("|")],
+                ["Skill", "What it does", "External requirements"],
+                f"Skills table needs an External requirements column: {header}",
+            )
+        for row in re.findall(r"^\|\s*`[a-z0-9-]+`\s*\|.*$", skills_section, re.MULTILINE):
+            cells = [c.strip() for c in row.strip().strip("|").split("|")]
+            self.assertEqual(len(cells), 3, f"Skills table row needs exactly 3 cells: {row}")
+            self.assertTrue(all(cells), f"Skills table row has an empty cell: {row}")
+
     def test_all_text_files_end_with_newline_and_json_parses(self) -> None:
         tracked = subprocess.run(
             ["git", "--no-optional-locks", "ls-files"],
