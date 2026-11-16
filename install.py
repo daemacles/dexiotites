@@ -21,6 +21,10 @@ What it puts in a project (all plain files, so a fresh clone of the project need
                                        config/detekt/detekt-comments.yml (Kotlin)
     .dexiotites.json                   manifest: source commit, options, hash of each copied file
 
+It then commits those paths, and only those, with the message
+`dexiotites installed to remote @ <hash>` (or `updated`), where <hash> is the first six
+characters of the dexiotites commit installed. Pass `--dont-add` to leave them uncommitted.
+
 Safety rules:
     - Nothing is written unless every change is safe. A copied file is safe to replace when it
       is unchanged since the last install (manifest hash) or is byte-identical to some version
@@ -30,9 +34,14 @@ Safety rules:
     - Existing linter configs that the script did not create are never edited; it prints what
       to merge by hand.
     - Running it twice changes nothing the second time.
+    - The commit holds the installer's changes and nothing else. Where the installer edits a
+      file the project owns (AGENTS.md, CLAUDE.md, Cargo.toml), it commits its edit applied to
+      the file's last committed version, so uncommitted work in that file stays uncommitted.
+      Other staged or modified files are never included.
 
-Exit codes: 0 done or already current; 1 conflicts, or `--check` found pending changes;
-2 usage or environment error. Requires Python 3.9 or newer and git.
+Exit codes: 0 done or already current; 1 conflicts, or `--check` found pending changes or an
+uncommitted install; 2 usage or environment error (including a commit git refused).
+Requires Python 3.9 or newer and git.
 
 Extending: each supported doc linter and each agent harness is one entry in the `LINT_CONFIGS`
 and `HARNESSES` tables below. The README section "Extending to a new language or harness" lists
@@ -49,6 +58,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -156,6 +166,9 @@ class Change:
         executable: Whether the written file gets the executable bit.
         link: Symlink target for `create`/`update` of a symlink (then `content` is None).
         managed: Whether the file is recorded in the manifest (copied verbatim from dexiotites).
+        staged: Bytes to commit when they must differ from `content`: the installer's edit
+            applied to the file's last committed version instead of its working copy.
+        track: False when the installer cannot work out what to commit for this path.
     """
 
     path: str
@@ -165,6 +178,8 @@ class Change:
     executable: bool = False
     link: str | None = None
     managed: bool = False
+    staged: bytes | None = None
+    track: bool = True
 
 
 class InstallError(Exception):
@@ -178,6 +193,44 @@ def _sha256(data: bytes) -> str:
 def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess:
     """Run git in `cwd`, capturing output; never raises on a non-zero exit."""
     return subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True)
+
+
+def _head_text(project: Path, rel: str) -> str | None:
+    """Return the text of `rel` as last committed in the project.
+
+    Returns:
+        The committed text; an empty string if the path is not committed (or the project has
+        no commits or is not a git repository); None if the committed entry is not a regular
+        file (a symlink or submodule).
+    """
+    listed = _git(project, "ls-tree", "HEAD", "--", rel).stdout.split()
+    if not listed:
+        return ""
+    if not listed[0].startswith("100"):
+        return None
+    return _git(project, "show", f"HEAD:{rel}").stdout
+
+
+def _set_staged(project: Path, change: Change, edit: Callable[[str], str | None]) -> Change:
+    """Work out what to commit for a file the project owns and the installer edits in place.
+
+    Args:
+        project: Root of the target project.
+        change: The planned change to the working copy; updated in place and returned.
+        edit: The installer's edit as a function of the file's text. It is applied here to the
+            committed version. Returning None, or raising InstallError, means the edit cannot
+            be applied to that version; the path is then left for the user to commit.
+    """
+    head = _head_text(project, change.path)
+    try:
+        text = None if head is None else edit(head)
+    except InstallError:
+        text = None
+    if text is None:
+        change.track = False
+    else:
+        change.staged = text.encode("utf-8")
+    return change
 
 
 def was_ever_shipped(source: Path, data: bytes) -> bool:
@@ -377,26 +430,33 @@ def shipped_bodies(source: Path) -> set[str]:
     return bodies
 
 
-def plan_agents_md(source: Path, project: Path) -> Change:
-    """Plan the marked rules block in the project's AGENTS.md.
+def agents_md_text(source: Path, old: str, where: str = "AGENTS.md") -> tuple[str, str, bool]:
+    """Return AGENTS.md text `old` with the marked rules block in place and up to date.
 
     Three starting states are handled: a marked block (its body is replaced), an unmarked
     "Code Comments" section from a hand-made install (replaced only if its body is a version
     dexiotites shipped, otherwise a conflict), or neither (the block is appended). The
     project's own heading line is kept, so numbering such as "## 6. Code Comments" survives.
 
+    Args:
+        source: Root of the dexiotites checkout.
+        old: Current text of the file; empty if it does not exist.
+        where: Name of the file, for error messages.
+
+    Returns:
+        The new text, a note describing what was done (may be empty), and whether replacing
+        the existing section is a conflict.
+
     Raises:
-        InstallError: if AGENTS.md has a begin marker without an end marker, or two blocks.
+        InstallError: if `old` has a begin marker without an end marker, or two blocks.
     """
     template = (source / TEMPLATE).read_text(encoding="utf-8").strip().splitlines()
-    path = project / "AGENTS.md"
-    old = path.read_text(encoding="utf-8") if path.exists() else ""
     lines = old.splitlines()
 
     begins = [i for i, line in enumerate(lines) if BEGIN_RE.match(line)]
     ends = [i for i, line in enumerate(lines) if line.strip() == END]
     if len(begins) > 1 or len(ends) > 1 or (begins and (not ends or ends[0] < begins[0])):
-        raise InstallError(f"{path}: malformed dexiotites markers; expected one begin/end pair")
+        raise InstallError(f"{where}: malformed dexiotites markers; expected one begin/end pair")
 
     detail, conflict = "", False
     if begins:
@@ -426,13 +486,26 @@ def plan_agents_md(source: Path, project: Path) -> Change:
     while after and not after[0].strip():
         after.pop(0)
     parts = [*before, *([""] if before else []), *block, *([""] if after else []), *after]
-    new = "\n".join(parts) + "\n"
+    return "\n".join(parts) + "\n", detail, conflict
 
-    if new == old:
-        return Change("AGENTS.md", "unchanged")
-    if conflict:
-        return Change("AGENTS.md", "conflict", detail, content=new.encode("utf-8"))
-    return Change("AGENTS.md", "update" if old else "create", detail, content=new.encode("utf-8"))
+
+def plan_agents_md(source: Path, project: Path) -> Change:
+    """Plan the marked rules block in the project's AGENTS.md; see `agents_md_text`.
+
+    Raises:
+        InstallError: if the working copy's markers are malformed.
+    """
+    path = project / "AGENTS.md"
+    old = path.read_text(encoding="utf-8") if path.exists() else ""
+    new, detail, conflict = agents_md_text(source, old, str(path))
+    status = "unchanged" if new == old else "conflict" if conflict else "update" if old else "create"
+    change = Change("AGENTS.md", status, detail if new != old else "", content=new.encode("utf-8"))
+
+    def committed_edit(head: str) -> str | None:
+        text, _, head_conflict = agents_md_text(source, head)
+        return None if head_conflict else text
+
+    return _set_staged(project, change, committed_edit)
 
 
 # --------------------------------------------------------------------------- other files
@@ -458,13 +531,17 @@ def plan_rules_file(project: Path, harness: Harness) -> list[Change]:
             return [Change(rel, "note", f"exists and is not a symlink to AGENTS.md: left as is; "
                            f"{harness.name} will not load the commenting rules from it")]
         return [Change(rel, "create", link=os.path.relpath("AGENTS.md", Path(rel).parent))]
-    if not path.exists():
-        return [Change(rel, "create", content=f"{harness.import_line}\n".encode("utf-8"))]
-    old = path.read_text(encoding="utf-8")
-    if any(line.strip().startswith(harness.import_line) for line in old.splitlines()):
-        return [Change(rel, "unchanged")]
-    return [Change(rel, "update", f"added the {harness.import_line} import line",
-                   content=f"{harness.import_line}\n\n{old}".encode("utf-8"))]
+
+    def with_import(text: str) -> str:
+        if any(line.strip().startswith(harness.import_line) for line in text.splitlines()):
+            return text
+        return f"{harness.import_line}\n\n{text}" if text else f"{harness.import_line}\n"
+
+    old = path.read_text(encoding="utf-8") if path.exists() else ""
+    new = with_import(old)
+    status = "unchanged" if new == old else "update" if path.exists() else "create"
+    detail = f"added the {harness.import_line} import line" if status == "update" else ""
+    return [_set_staged(project, Change(rel, status, detail, content=new.encode("utf-8")), with_import)]
 
 
 def plan_skill_links(project: Path, skills: list[str], harness: Harness) -> list[Change]:
@@ -487,7 +564,7 @@ def plan_skill_links(project: Path, skills: list[str], harness: Harness) -> list
         link = project / rel
         target = os.path.relpath(f".agents/skills/{skill}", harness.skills_dir)
         if link.is_symlink() and os.readlink(link) == target:
-            changes.append(Change(rel, "unchanged"))
+            changes.append(Change(rel, "unchanged", link=target))
         elif link.exists() and link.resolve() == (canonical / skill).resolve():
             changes.append(Change(rel, "unchanged"))
         elif link.is_symlink():
@@ -500,38 +577,47 @@ def plan_skill_links(project: Path, skills: list[str], harness: Harness) -> list
     return changes
 
 
-def plan_cargo_lints(source: Path, project: Path, lint: bool) -> list[Change]:
-    """Plan the documentation `[lints]` block at the end of the project's root Cargo.toml.
+def cargo_lints_text(source: Path, old: str, lint: bool) -> tuple[str | None, str]:
+    """Return Cargo.toml text `old` with the documentation `[lints]` block added or refreshed.
 
-    The block is appended between marker comments and replaced in place on later runs. A
-    Cargo.toml that already has its own `[lints]` tables, or that is a workspace root, is
-    left alone with a note, because merging TOML tables safely needs a human. With `lint`
-    False, a block this script added earlier is removed.
+    The block sits at the end of the file between marker comments and is replaced in place
+    when already there. With `lint` False, a block added earlier is removed.
+
+    Returns:
+        The new text and an empty note; or None and a note when the file is left alone
+        because it has its own `[lints]` tables or is a workspace root (merging TOML tables
+        safely needs a human). None with an empty note means there is nothing to do.
     """
-    path = project / "Cargo.toml"
-    if not path.is_file():
-        return []
-    old = path.read_text(encoding="utf-8")
     template = (source / "instructions" / "lint" / "rust-cargo-lints.toml").read_text(encoding="utf-8")
     block = f"{TOML_BEGIN}\n{template.strip()}\n{TOML_END}\n"
     pattern = re.compile(r"^# dexiotites:begin doc lints.*?^# dexiotites:end\n?", re.DOTALL | re.MULTILINE)
     if pattern.search(old):
         new = pattern.sub(lambda _: block if lint else "", old, count=1)
-        new = new.rstrip("\n") + "\n"
-    elif not lint:
+        return new.rstrip("\n") + "\n", ""
+    if not lint:
+        return None, ""
+    if LINTS_TABLE_RE.search(old):
+        return None, ("Rust: existing [lints] tables left as is; merge "
+                      "instructions/lint/rust-cargo-lints.toml into them by hand")
+    if re.search(r"^\[workspace\]", old, re.MULTILINE):
+        return None, ("Rust: workspace root left as is; add the tables from "
+                      "instructions/lint/rust-cargo-lints.toml as [workspace.lints.*] by hand "
+                      "(see that file's header)")
+    return old.rstrip("\n") + "\n\n" + block, ""
+
+
+def plan_cargo_lints(source: Path, project: Path, lint: bool) -> list[Change]:
+    """Plan the documentation `[lints]` block in the project's root Cargo.toml, if it has one."""
+    path = project / "Cargo.toml"
+    if not path.is_file():
         return []
-    elif LINTS_TABLE_RE.search(old):
-        return [Change("Cargo.toml", "note", "Rust: existing [lints] tables left as is; merge "
-                       "instructions/lint/rust-cargo-lints.toml into them by hand")]
-    elif re.search(r"^\[workspace\]", old, re.MULTILINE):
-        return [Change("Cargo.toml", "note", "Rust: workspace root left as is; add the tables from "
-                       "instructions/lint/rust-cargo-lints.toml as [workspace.lints.*] by hand "
-                       "(see that file's header)")]
-    else:
-        new = old.rstrip("\n") + "\n\n" + block
-    if new == old:
-        return [Change("Cargo.toml", "unchanged")]
-    return [Change("Cargo.toml", "update", "documentation [lints] block", content=new.encode("utf-8"))]
+    old = path.read_text(encoding="utf-8")
+    new, note = cargo_lints_text(source, old, lint)
+    if new is None:
+        return [Change("Cargo.toml", "note", note)] if note else []
+    change = Change("Cargo.toml", "unchanged" if new == old else "update",
+                    "" if new == old else "documentation [lints] block", content=new.encode("utf-8"))
+    return [_set_staged(project, change, lambda head: cargo_lints_text(source, head, lint)[0] if head else None)]
 
 
 # --------------------------------------------------------------------------- driver
@@ -594,7 +680,7 @@ def plan(source: Path, project: Path, skills: list[str] | None, lint: bool | Non
         status = "update" if (project / MANIFEST).exists() else "create"
         changes.append(Change(MANIFEST, status, content=data))
     else:
-        changes.append(Change(MANIFEST, "unchanged"))
+        changes.append(Change(MANIFEST, "unchanged", content=(project / MANIFEST).read_bytes()))
     return changes, new_manifest
 
 
@@ -621,6 +707,96 @@ def apply(project: Path, changes: list[Change]) -> None:
                 dst.chmod(0o755 if c.executable else 0o644)
 
 
+def uncommitted(project: Path, changes: list[Change], write: bool) -> tuple[list[tuple], list[str]]:
+    """Compare what the installer put in the project with the project's last commit.
+
+    Args:
+        project: Root of the target project; must be the root of a git repository.
+        changes: The plan, after it has been applied.
+        write: Store the blobs in the repository's object database, as a commit needs. False
+            only computes their ids.
+
+    Returns:
+        The index entries that differ from HEAD, each `(path, mode, blob id)` or, for a path
+        to delete, `(path, None, None)`; and the paths the installer changed but cannot commit
+        (`Change.track` is False), which the user has to commit.
+    """
+    paths = [c.path for c in changes if c.status != "note"]
+    tree = {}
+    for line in _git(project, "ls-tree", "HEAD", "--", *paths).stdout.splitlines():
+        meta, path = line.split("\t", 1)
+        mode, _, blob = meta.split()
+        tree[path] = (mode, blob)
+    entries, skipped = [], []
+    for c in changes:
+        if c.status == "remove":
+            if c.path in tree:
+                entries.append((c.path, None, None))
+            continue
+        if c.status == "note" or (c.content is None and c.link is None):
+            continue
+        if not c.track:
+            skipped.append(c.path)
+            continue
+        if c.link is not None:
+            mode, data = "120000", c.link.encode("utf-8")
+        else:
+            data = c.content if c.staged is None else c.staged
+            kept = tree.get(c.path, ("100644",))[0]
+            mode = ("100755" if c.executable else "100644") if c.managed or not kept.startswith("100") else kept
+        hashed = subprocess.run(["git", "-C", str(project), "hash-object", *(["-w"] if write else []), "--stdin"],
+                                input=data, capture_output=True)
+        blob = hashed.stdout.decode().strip()
+        if tree.get(c.path) != (mode, blob):
+            entries.append((c.path, mode, blob))
+    return entries, skipped
+
+
+def commit_install(project: Path, changes: list[Change]) -> str:
+    """Commit the installed paths, and nothing else, to the project's current branch.
+
+    The commit is built in a temporary index that starts from HEAD, so files the user has
+    staged or modified are not swept in. Afterwards the same entries are set in the real
+    index, which leaves the installed paths clean and every other path as it was.
+
+    Returns:
+        A one-line report: the new commit and its message, or why nothing was committed.
+
+    Raises:
+        InstallError: if git refuses the commit (no identity configured, a hook failed).
+    """
+    entries, skipped = uncommitted(project, changes, write=True)
+    left = f"; commit {', '.join(skipped)} yourself" if skipped else ""
+    if not entries:
+        return f"nothing to commit{left}"
+    has_head = _git(project, "rev-parse", "--verify", "-q", "HEAD").returncode == 0
+    verb = "updated" if _git(project, "ls-tree", "HEAD", "--", MANIFEST).stdout.strip() else "installed"
+    installed = load_manifest(project).get("commit", "unknown")
+    version = installed[:6] + ("+dirty" if installed.endswith("+dirty") else "")
+    message = f"dexiotites {verb} to remote @ {version}"
+
+    def stage(env: dict | None) -> None:
+        for path, mode, blob in entries:
+            args = ["--force-remove", path] if mode is None else ["--add", "--cacheinfo", f"{mode},{blob},{path}"]
+            subprocess.run(["git", "-C", str(project), "update-index", *args], env=env, check=True,
+                           capture_output=True)
+
+    with tempfile.TemporaryDirectory(prefix="dexiotites-index-") as tmp:
+        env = {**os.environ, "GIT_INDEX_FILE": str(Path(tmp) / "index")}
+        if has_head:
+            subprocess.run(["git", "-C", str(project), "read-tree", "HEAD"], env=env, check=True)
+        stage(env)
+        done = subprocess.run(["git", "-C", str(project), "commit", "-q", "-m", message],
+                              env=env, capture_output=True, text=True)
+    if done.returncode != 0:
+        reason = (done.stderr.strip() or done.stdout.strip()).splitlines()
+        raise InstallError("the files are installed, but git refused to commit them: "
+                           + (" ".join(reason[:3]) if reason else "no reason given"))
+    stage(None)
+    short = _git(project, "rev-parse", "--short", "HEAD").stdout.strip()
+    return f'committed {short} "{message}"{left}'
+
+
 def run(source: Path, project: Path, args: argparse.Namespace) -> int:
     """Plan, report and (unless checking or blocked by conflicts) apply changes to one project.
 
@@ -632,7 +808,8 @@ def run(source: Path, project: Path, args: argparse.Namespace) -> int:
     if not project.is_dir():
         raise InstallError(f"not a directory: {project}")
     top = _git(project, "rev-parse", "--show-toplevel").stdout.strip()
-    if not top or Path(top).resolve() != project.resolve():
+    is_repo_root = bool(top) and Path(top).resolve() == project.resolve()
+    if not is_repo_root:
         print("  warning: not the root of a git repository; annotate-code's checker needs git")
     lint = False if args.no_lint else (True if args.lint else None)
     changes, manifest = plan(source, project, args.skill, lint, args.force)
@@ -655,14 +832,24 @@ def run(source: Path, project: Path, args: argparse.Namespace) -> int:
         if pending or conflicts:
             print(f"  out of date: {len(pending) + len(conflicts)} change(s) pending")
             return 1
+        loose = uncommitted(project, changes, write=False)[0] if is_repo_root else []
+        if loose:
+            print(f"  up to date, but {len(loose)} installed path(s) are not committed: "
+                  + ", ".join(path for path, _, _ in loose))
+            return 1
         print(f"  up to date ({unchanged} items, dexiotites {manifest['commit'][:7]})")
         return 0
     apply(project, changes)
     if pending:
-        print(f"  done: {len(pending)} change(s), {unchanged} unchanged. "
-              "Review with `git status`, then commit.")
+        print(f"  done: {len(pending)} change(s), {unchanged} unchanged.")
     else:
         print(f"  already up to date ({unchanged} items)")
+    if args.dont_add:
+        print("  not committed (--dont-add): review with `git status`, then commit.")
+    elif not is_repo_root:
+        print("  not committed: this folder is not the root of a git repository.")
+    else:
+        print(f"  {commit_install(project, changes)}")
     return 0
 
 
@@ -700,6 +887,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--skill", action="append", metavar="NAME",
                     help="extra skill to install besides annotate-code, e.g. distill-spec; "
                          "repeatable, and remembered for later runs")
+    ap.add_argument("--dont-add", action="store_true",
+                    help="install or update the files but do not `git add` or commit them")
     ap.add_argument("--no-lint", action="store_true",
                     help="no doc-linter configs (removes ones this script installed); remembered")
     ap.add_argument("--lint", action="store_true", help="turn doc-linter configs back on")

@@ -27,6 +27,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 GIT_ID = ["-c", "user.name=t", "-c", "user.email=t@example.com"]
 CARGO = '[package]\nname = "demo"\nversion = "0.1.0"\nedition = "2021"\n\n[dependencies]\n'
 MARK = "<!-- dexiotites:begin"
+# The installer commits with whatever identity git has; give it one so the tests run anywhere.
+COMMIT_ENV = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com",
+              "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.com"}
 
 
 def git(cwd: Path, *args: str) -> str:
@@ -87,7 +90,11 @@ class InstallTestCase(unittest.TestCase):
 
     def install(self, *args: object, cwd: Path | None = None) -> subprocess.CompletedProcess:
         return subprocess.run([sys.executable, str(self.source / "install.py"), *map(str, args)],
-                              cwd=cwd or self.tmp, capture_output=True, text=True)
+                              cwd=cwd or self.tmp, capture_output=True, text=True, env=COMMIT_ENV)
+
+    def source_hash(self) -> str:
+        """First six characters of the source's current commit, as the commit message shows it."""
+        return git(self.source, "rev-parse", "HEAD")[:6]
 
     def edit_source(self, rel: str, old: str, new: str) -> None:
         path = self.source / rel
@@ -141,8 +148,7 @@ class TestFreshInstall(InstallTestCase):
         self.assertIn("`docs/COMMENTING.md`", block)
 
         # The installed checker must run from the project: comment-only edit passes, code edit fails.
-        git(proj, "add", "-A")
-        git(proj, "commit", "-q", "-m", "install")
+        self.assertEqual(git(proj, "status", "--porcelain"), "", "the install must be committed")
         (proj / "src/main.rs").write_text("// entry point\nfn main() {}\n")
         ok = subprocess.run([sys.executable, str(checker), "--strict", "src/main.rs"],
                             cwd=proj, capture_output=True, text=True)
@@ -457,7 +463,7 @@ class TestOtherWaysToRunIt(InstallTestCase):
         proj = self.project()
         env = {**os.environ, "DEXIOTITES_URL": str(self.source)}
         with (self.source / "install.py").open("rb") as script:
-            res = subprocess.run([sys.executable, "-"], stdin=script, cwd=proj, env=env,
+            res = subprocess.run([sys.executable, "-"], stdin=script, cwd=proj, env={**COMMIT_ENV, **env},
                                  capture_output=True, text=True)
         self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
         self.assertTrue((proj / ".agents/skills/annotate-code/SKILL.md").is_file())
@@ -471,7 +477,7 @@ class TestOtherWaysToRunIt(InstallTestCase):
         git(proj, "-c", "protocol.file.allow=always", "submodule", "add", "-q",
             str(self.source), ".dexiotites")
         res = subprocess.run([sys.executable, ".dexiotites/install.py"], cwd=proj,
-                             capture_output=True, text=True)
+                             capture_output=True, text=True, env=COMMIT_ENV)
         self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
         self.assertFalse((proj / "ruff.toml").exists(), "submodule's Python must not count as the project's")
         self.assertFalse((proj / "config").exists(), "submodule's Kotlin fixtures must not count either")
@@ -486,6 +492,135 @@ class TestOtherWaysToRunIt(InstallTestCase):
         ok = subprocess.run([sys.executable, str(checker), "--strict", "src/main.rs"],
                             cwd=clone, capture_output=True, text=True)
         self.assertEqual(ok.returncode, 0, ok.stdout + ok.stderr)
+
+
+class TestCommit(InstallTestCase):
+    """The installer commits what it installed, and only that."""
+
+    def subject(self, proj: Path) -> str:
+        return git(proj, "log", "-1", "--format=%s").strip()
+
+    def committed_paths(self, proj: Path) -> list[str]:
+        return git(proj, "show", "--format=", "--name-only", "HEAD").split()
+
+    def test_install_then_update_are_committed_with_the_agreed_messages(self) -> None:
+        proj = self.project()
+        res = self.install(proj)
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        self.assertEqual(self.subject(proj), f"dexiotites installed to remote @ {self.source_hash()}")
+        self.assertEqual(git(proj, "status", "--porcelain"), "")
+        self.assertEqual(git(proj, "ls-tree", "HEAD", ".agents/skills/annotate-code/scripts/comment_diff_check.py")
+                         .split()[0], "100755")
+        self.assertEqual(git(proj, "ls-tree", "HEAD", ".claude/skills/annotate-code").split()[0], "120000")
+        self.assertEqual(self.install(proj, "--check").returncode, 0)
+
+        head = git(proj, "rev-parse", "HEAD")
+        self.assertEqual(self.install(proj).returncode, 0)
+        self.assertEqual(git(proj, "rev-parse", "HEAD"), head, "a second run must not add a commit")
+
+        extra = self.source / "skills/annotate-code/extra.md"
+        extra.write_text("extra\n")
+        self.commit_source("v2 adds a file")
+        self.assertEqual(self.install(proj).returncode, 0)
+        extra.unlink()
+        self.edit_source("instructions/COMMENTING.md", "## 1.", "## 1. (revised)")
+        self.commit_source("v3 drops it again")
+        self.assertEqual(self.install(proj).returncode, 0)
+        self.assertEqual(self.subject(proj), f"dexiotites updated to remote @ {self.source_hash()}")
+        self.assertEqual(sorted(self.committed_paths(proj)),
+                         [".agents/skills/annotate-code/extra.md", ".dexiotites.json", "docs/COMMENTING.md"])
+        self.assertEqual(git(proj, "ls-tree", "HEAD", ".agents/skills/annotate-code/extra.md"), "")
+        self.assertEqual(git(proj, "status", "--porcelain"), "")
+
+    def test_dont_add_leaves_everything_uncommitted_until_a_later_run(self) -> None:
+        proj = self.project()
+        head = git(proj, "rev-parse", "HEAD")
+        res = self.install(proj, "--dont-add")
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        self.assertEqual(git(proj, "rev-parse", "HEAD"), head)
+        self.assertIn("?? docs/", git(proj, "status", "--porcelain"))
+        check = self.install(proj, "--check")
+        self.assertEqual(check.returncode, 1)
+        self.assertIn("not committed", check.stdout)
+        # A plain run later commits the files that are already in place.
+        before = snapshot(proj)
+        self.assertEqual(self.install(proj).returncode, 0)
+        self.assertEqual(snapshot(proj), before)
+        self.assertEqual(self.subject(proj), f"dexiotites installed to remote @ {self.source_hash()}")
+        self.assertEqual(git(proj, "status", "--porcelain"), "")
+
+    def test_users_own_uncommitted_work_stays_out_of_the_commit(self) -> None:
+        proj = self.project(files={"Cargo.toml": CARGO, "src/main.rs": "fn main() {}\n",
+                                   "CLAUDE.md": "House notes.\n"})
+        wip_cargo = CARGO + 'serde = "1"\n'
+        (proj / "Cargo.toml").write_text(wip_cargo)                  # modified, not staged
+        (proj / "src/main.rs").write_text("fn main() { todo!() }\n")  # modified, not staged
+        (proj / "CLAUDE.md").write_text("House notes.\nMore notes in progress.\n")
+        (proj / "notes.txt").write_text("staged by the user\n")
+        git(proj, "add", "notes.txt")                                 # staged, not committed
+        (proj / "junk.txt").write_text("untracked\n")
+        (proj / "AGENTS.md").write_text("# Draft rules, not committed yet\n")
+
+        res = self.install(proj)
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        paths = self.committed_paths(proj)
+        for own in ("src/main.rs", "notes.txt", "junk.txt"):
+            self.assertNotIn(own, paths)
+        # Files the installer edits in place: the commit holds its edit on the committed version.
+        committed_cargo = git(proj, "show", "HEAD:Cargo.toml")
+        self.assertTrue(committed_cargo.startswith(CARGO))
+        self.assertIn("[lints.rust]", committed_cargo)
+        self.assertNotIn("serde", committed_cargo)
+        self.assertEqual(git(proj, "show", "HEAD:CLAUDE.md"), "@AGENTS.md\n\nHouse notes.\n")
+        self.assertTrue(git(proj, "show", "HEAD:AGENTS.md").startswith(MARK))
+        self.assertNotIn("Draft rules", git(proj, "show", "HEAD:AGENTS.md"))
+        # The working copies keep both the user's work and the installer's edit.
+        self.assertIn("serde", (proj / "Cargo.toml").read_text())
+        self.assertIn("[lints.rust]", (proj / "Cargo.toml").read_text())
+        self.assertIn("More notes in progress.", (proj / "CLAUDE.md").read_text())
+        self.assertIn("Draft rules", (proj / "AGENTS.md").read_text())
+        # And git still sees the user's work exactly as uncommitted work.
+        self.assertEqual(git(proj, "diff", "--cached", "--name-only").split(), ["notes.txt"])
+        self.assertEqual(sorted(git(proj, "diff", "--name-only").split()),
+                         ["AGENTS.md", "CLAUDE.md", "Cargo.toml", "src/main.rs"])
+        self.assertIn("?? junk.txt", git(proj, "status", "--porcelain"))
+        self.assertNotIn("serde", git(proj, "diff", "HEAD~1", "HEAD"))
+        self.assertEqual(self.install(proj, "--check").returncode, 0)
+
+    def test_uncommitted_cargo_toml_is_left_for_the_user(self) -> None:
+        proj = self.project(files={"README.md": "x\n"})
+        (proj / "Cargo.toml").write_text(CARGO)                       # never committed
+        res = self.install(proj)
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        self.assertIn("commit Cargo.toml yourself", res.stdout)
+        self.assertNotIn("Cargo.toml", self.committed_paths(proj))
+        self.assertIn("[lints.rust]", (proj / "Cargo.toml").read_text())
+
+    def test_repository_without_commits_gets_a_first_commit(self) -> None:
+        proj = self.tmp / "empty"
+        proj.mkdir()
+        git(proj, "init", "-q", "-b", "main")
+        (proj / "wip.py").write_text('"""Not committed."""\n')
+        res = self.install(proj)
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        self.assertEqual(self.subject(proj), f"dexiotites installed to remote @ {self.source_hash()}")
+        self.assertNotIn("wip.py", git(proj, "ls-tree", "-r", "--name-only", "HEAD"))
+        self.assertIn("docs/COMMENTING.md", git(proj, "ls-tree", "-r", "--name-only", "HEAD"))
+
+    def test_commit_refused_by_git_is_reported_and_files_stay_installed(self) -> None:
+        proj = self.project()
+        hook = proj / ".git/hooks/pre-commit"
+        hook.parent.mkdir(exist_ok=True)
+        hook.write_text("#!/bin/sh\necho 'hook says no' >&2\nexit 1\n")
+        hook.chmod(0o755)
+        head = git(proj, "rev-parse", "HEAD")
+        res = self.install(proj)
+        self.assertEqual(res.returncode, 2)
+        self.assertIn("git refused to commit", res.stderr)
+        self.assertIn("hook says no", res.stderr)
+        self.assertEqual(git(proj, "rev-parse", "HEAD"), head)
+        self.assertTrue((proj / "docs/COMMENTING.md").is_file())
+        self.assertEqual(git(proj, "diff", "--cached", "--name-only"), "", "the user's index must be untouched")
 
 
 class TestExtensionTables(InstallTestCase):

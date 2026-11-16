@@ -57,9 +57,22 @@ With no clone at hand, this fetches one into a temporary folder and runs it:
 curl -fsSL https://raw.githubusercontent.com/daemacles/dexiotites/main/install.py | python3 -
 ```
 
-Then review `git status` and commit. Nothing else is needed: everything is installed as plain
-files inside the project, so fresh clones, CI and cloud agent sessions get it with no extra
-step. Requires Python 3.9+ and git.
+Nothing else is needed. Everything is installed as plain files inside the project and
+committed, so fresh clones, CI and cloud agent sessions get it with no extra step. Requires
+Python 3.9+ and git.
+
+**The commit.** The installer commits the paths in the table below to the current branch, with
+the message `dexiotites installed to remote @ 83665a` (or `updated`; the hash is the first six
+characters of the dexiotites commit installed). The commit holds the installer's changes and
+nothing else:
+- Files you have modified, staged or left untracked are not included and stay as they were.
+- Where it edits a file of yours (`AGENTS.md`, `CLAUDE.md`, `Cargo.toml`), it commits its edit
+  applied to the last committed version of that file. Uncommitted work of your own in the same
+  file stays uncommitted.
+- A `Cargo.toml` that has never been committed is edited but not committed; the installer
+  says so.
+
+Pass `--dont-add` to install without committing. A later plain run commits what is in place.
 
 | Installed in the project | Purpose |
 |---|---|
@@ -75,7 +88,8 @@ step. Requires Python 3.9+ and git.
 
 | Option | Effect |
 |---|---|
-| `--check` | Writes nothing. Exit code 0 if the project is current, 1 if it is out of date or has conflicts. |
+| `--check` | Writes nothing. Exit code 0 if the project is current and committed, 1 if it is out of date, has conflicts, or has installed files that are not committed. |
+| `--dont-add` | Install or update the files, but do not `git add` or commit them. |
 | `--skill NAME` | Also install another skill from `skills/` (for example `--skill distill-spec`). Remembered for later runs. |
 | `--no-lint` / `--lint` | Leave out (and remove) the doc-linter configs, or turn them back on. Remembered. |
 | `--force` | Replace conflicting files. Local edits in them are lost. |
@@ -89,6 +103,9 @@ conflicting files, and whatever was edited into them is lost, so first copy out 
 keeping. Agents: on exit code 1, stop and show the user the conflict list; do not add `--force`
 on your own.
 
+Exit code 2 means the files were installed but git refused the commit (no identity configured,
+or a commit hook failed). Fix the cause and rerun; nothing is installed twice.
+
 **Do not edit the installed copies in a project.** Rules for one project only go in that
 project's `AGENTS.md`, outside the marked block. Rules for every project go in the masters in
 this repo; then rerun the installer in each project. `--check` in a project tells you whether
@@ -101,7 +118,8 @@ file by file with the `annotate-code` skill ([Retrofitting existing code](#retro
 **As a git submodule (optional, not recommended).** The installer also runs from a submodule:
 `git submodule add https://github.com/daemacles/dexiotites .dexiotites && python3 .dexiotites/install.py`,
 and later `git submodule update --remote .dexiotites && python3 .dexiotites/install.py`. The
-installed files are still plain copies, so clones that never fetch the submodule keep working.
+installer does not commit the submodule itself (`.gitmodules` and the `.dexiotites` entry); do
+that yourself. The installed files are still plain copies, so clones that never fetch the submodule keep working.
 The submodule adds this repo's own agent files, tests and personal skills to the project
 tree, where Claude Code can pick them up and where project-wide searches and linters see them,
 so prefer the plain command above.

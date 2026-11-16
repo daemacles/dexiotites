@@ -58,7 +58,8 @@ one fault at a time and reports any that the suite fails to catch.
 ## 3. Editing the installer (`install.py`) or what it installs
 
 - **Safety properties are tests:** a second run changes nothing; any conflict means nothing is
-  written; content the project owns is replaced only with `--force`. Every new kind of file the
+  written; content the project owns is replaced only with `--force`; the commit holds the
+  installer's changes and none of the user's uncommitted work. Every new kind of file the
   installer writes needs a case in `tests/test_install.py` for each of these.
   *(Prevents an installer change from clobbering a project's own files.)*
 - **Renames are breaking:** `docs/COMMENTING.md`, `.agents/skills/<name>/`, the `Code Comments`
