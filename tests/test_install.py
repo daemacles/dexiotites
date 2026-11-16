@@ -409,12 +409,12 @@ class TestLinterConfigs(InstallTestCase):
         cargo = proj / "Cargo.toml"
         cargo.write_text(cargo.read_text() + '\n[profile.release]\nlto = true\n')
         self.edit_source("instructions/lint/rust-cargo-lints.toml",
-                         'missing_panics_doc = "warn"', 'missing_panics_doc = "deny"')
+                         'missing_panics_doc = "deny"', 'missing_panics_doc = "forbid"')
         self.commit_source("v2")
         self.assertEqual(self.install(proj).returncode, 0)
         text = cargo.read_text()
         self.assertEqual(text.count("[lints.rust]"), 1)
-        self.assertIn('missing_panics_doc = "deny"', text)
+        self.assertIn('missing_panics_doc = "forbid"', text)
         self.assertTrue(text.startswith(CARGO))
         self.assertTrue(text.endswith('\n[profile.release]\nlto = true\n'))
 

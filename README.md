@@ -122,12 +122,13 @@ linter config it did not create; where one already exists it prints what to merg
 
 | Language | Installed automatically | Left to you | Finish gate |
 |---|---|---|---|
-| Rust | The tables from `instructions/lint/rust-cargo-lints.toml`, appended to the root `Cargo.toml` in a marked block. | A `Cargo.toml` that already has `[lints]` tables, or is a workspace root (see the config's header). | `cargo clippy --all-targets -- -D warnings` and `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` |
+| Rust | The tables from `instructions/lint/rust-cargo-lints.toml`, appended to the root `Cargo.toml` in a marked block. | A `Cargo.toml` that already has `[lints]` tables, or is a workspace root (see the config's header). | `cargo clippy --all-targets -- -D missing_docs` and `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` |
 | Python | `instructions/lint/ruff-docstrings.toml` as `ruff.toml`. | Any existing ruff config: merge the tables by hand (in `pyproject.toml`, prefix them with `tool.ruff.`). | `ruff check --select D .` |
 | Lua | `instructions/lint/luarc-docs.json` as `.luarc.json`. | An existing `.luarc.json`: merge the two `diagnostics.*` objects into it. | `lua-language-server --check=. --checklevel=Warning --configpath=.luarc.json` |
 | Kotlin | `instructions/lint/detekt-comments.yml` as `config/detekt/detekt-comments.yml`. | The Gradle plugin block below. | `./gradlew detekt` |
 
 Clippy checks presence and `# Errors`/`# Panics`/`# Safety`/`SAFETY:`; rustdoc checks `[links]`.
+The Rust gate denies only the documentation lints, so clippy's style warnings never block it.
 The Lua gate exits with code 1 when anything is reported (tested with lua-language-server 3.19.2).
 
 **Kotlin build file (detekt 2.0).** The 2.0 line is required for Kotlin 2.2+ / Gradle 9 / AGP 9;

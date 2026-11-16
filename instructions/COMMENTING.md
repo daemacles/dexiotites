@@ -184,13 +184,14 @@ After: purpose first, constants linked rather than copied, contract stated.
 Linters check the mechanical part of this guide, so agents don't have to remember it:
 public declarations have doc comments, documented parameters match the signature, and
 `unsafe` blocks have `SAFETY:` comments. Whether a comment is *useful* (purpose, units, sourced
-rationale) remains a matter for this guide and for review. Ready-made configurations are in the
-dexiotites repo under `instructions/lint/`:
+rationale) remains a matter for this guide and for review. The dexiotites installer adds the
+configuration for each language a project uses (the masters are in that repo's
+`instructions/lint/`). Each gate fails on documentation findings only:
 
 | Language | Tool and config | Finish-gate command (must pass) |
 |---|---|---|
 | Kotlin | detekt 2.0, `detekt-comments.yml` | `./gradlew detekt` |
-| Rust | rustc, clippy and rustdoc lints, `rust-cargo-lints.toml` | `cargo clippy --all-targets -- -D warnings` and `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` |
+| Rust | rustc, clippy and rustdoc lints, `rust-cargo-lints.toml` | `cargo clippy --all-targets -- -D missing_docs` and `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` |
 | Python | ruff (pydocstyle, Google convention), `ruff-docstrings.toml` | `ruff check --select D .` |
 | Lua | lua-language-server (LuaLS), `luarc-docs.json` | `lua-language-server --check=. --checklevel=Warning --configpath=.luarc.json` |
 

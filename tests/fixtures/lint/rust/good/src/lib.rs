@@ -27,3 +27,11 @@ pub unsafe fn read(ptr: *const u32) -> u32 {
     // SAFETY: the caller upholds this function's `# Safety` contract.
     unsafe { *ptr }
 }
+
+/// Returns twice `n`.
+///
+/// The explicit `return` is a deliberate clippy style finding (`needless_return`): the
+/// documentation gate must report it without failing on it.
+pub fn double(n: u32) -> u32 {
+    return n * 2;
+}
