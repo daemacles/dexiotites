@@ -568,9 +568,10 @@ def run(source: Path, project: Path, args: argparse.Namespace) -> int:
     unchanged = sum(c.status == "unchanged" for c in changes)
 
     if conflicts:
-        print(f"  NOTHING WRITTEN: {len(conflicts)} conflict(s). These files hold content that "
-              "did not come from dexiotites.\n  Keep the local edits (move them elsewhere or "
-              "upstream them into dexiotites), or rerun with --force to replace them.")
+        print(f"  NOTHING WRITTEN: {len(conflicts)} conflict(s). The files marked 'conflict' hold "
+              "content that did not come from dexiotites.\n  To keep that content, move it out of "
+              "those files (or add it to dexiotites itself) and rerun.\n  --force replaces the "
+              "files and loses that content: only the project's owner should choose that.")
         return 1
     if args.check:
         if pending or conflicts:
