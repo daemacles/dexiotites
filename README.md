@@ -137,8 +137,7 @@ With an existing config, merge the tables by hand (in `pyproject.toml`, prefix t
 
 With an existing `.luarc.json`, merge the two `diagnostics.*` objects into it. Gate:
 `lua-language-server --check=. --checklevel=Warning --configpath=.luarc.json` (exit code 1 when
-anything is reported). This config has not yet been run end to end; check it against a known
-undocumented function the first time you use it.
+anything is reported). Tested with lua-language-server 3.19.2.
 
 ### Running annotate-code
 
