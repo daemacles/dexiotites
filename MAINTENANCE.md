@@ -3,8 +3,10 @@
 This checklist guards against semantic and cross-agent regressions that lower-tier models
 commonly miss. Mechanical invariants (embedded-file byte parity, `#!` executable bits, valid
 `SKILL.md` frontmatter, `README.md` skill-table coverage and external-requirements column,
-trailing newlines, and clean skill folders with no `__pycache__`) are enforced automatically by
-`tests/test_repo_hygiene.py`.
+guide section numbers, finish-gate commands, file paths and links named in the docs, trailing
+newlines, and clean skill folders with no `__pycache__`) are enforced automatically by
+`tests/test_repo_hygiene.py`. `tests/mutation_audit.py` checks the tests themselves: it plants
+one fault at a time and reports any that the suite fails to catch.
 
 **Required gate on every edit:**
 1. Read and check every section below that matches what you touched.
@@ -53,11 +55,18 @@ trailing newlines, and clean skill folders with no `__pycache__`) are enforced a
   literal models do not emit `"Side effects: none"` noise, and specify behavior for `override` /
   trait implementations and unit test files.
 
-## 3. Editing setup snippets (`README.md`)
+## 3. Editing the installer (`install.py`) or what it installs
 
-- **Idempotency:** Every shell block must be safe to run twice in an already-populated repo.
-  Never use bare `> CLAUDE.md` or `> AGENTS.md` without checking `[ ! -f ... ]`, and always insert
-  a blank line (`[ -s FILE ] && printf '\n' >> FILE`) before `>>` appending Markdown headings.
+- **Safety properties are tests:** a second run changes nothing; any conflict means nothing is
+  written; content the project owns is replaced only with `--force`. Every new kind of file the
+  installer writes needs a case in `tests/test_install.py` for each of these.
+  *(Prevents an installer change from clobbering a project's own files.)*
+- **Renames are breaking:** `docs/COMMENTING.md`, `.agents/skills/<name>/`, the `Code Comments`
+  heading and the `dexiotites:begin`/`end` markers are how the installer finds earlier installs.
+  Changing one needs migration code for projects already installed, plus a test of it.
+- **Guide section numbers are an interface:** `COMMENTING.md` §2, §3, §4, §6, §8 and §9 are cited
+  from the skill, the `AGENTS.md` section, the lint configs and the README. Add new sections at
+  the end; the hygiene tests fail on a renumbering.
 
 ## 4. Editing parsers, lexers, or verification scripts
 

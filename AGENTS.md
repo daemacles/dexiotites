@@ -13,8 +13,9 @@ This repository holds reusable instructions (`instructions/`) and agent skills (
 
 ## Source-of-Truth & Editing Rules
 
-1. **`instructions/`, `tests/`, and `MAINTENANCE.md` are mastered in this git repository.** Edit
-   them directly here.
+1. **`instructions/`, `install.py`, `tests/`, and `MAINTENANCE.md` are mastered in this git
+   repository.** Edit them directly here. Projects get their copies from `install.py`; after
+   changing `instructions/` or `skills/annotate-code/`, tell the user which projects to rerun it in.
 2. **`skills/` mirrors Claude account skills via `skills/sync-skills-repo/SKILL.md`.**
    - If you edit anything under `skills/` in git, commit cleanly and remember that the Claude
      account copy should also be updated (otherwise the next `sync-skills-repo` run will pause

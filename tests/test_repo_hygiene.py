@@ -252,6 +252,94 @@ class TestRepoHygiene(unittest.TestCase):
                              capture_output=True, text=True)
         self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
 
+    # ---- cross-file references: an edit in one file must not silently invalidate another ----
+
+    # COMMENTING.md section numbers that other files cite, with a word each title must contain.
+    # Citations live in annotate-code's SKILL.md, the AGENTS.md section, the lint config
+    # headers, README.md and MAINTENANCE.md, and in every project that installed them.
+    GUIDE_SECTIONS = {2: "Required", 3: "Prohibited", 4: "Rationale", 5: "Keeping comments true",
+                      6: "Language specifics", 8: "linters", 9: "Retrofitting"}
+    GUIDE_CITERS = ("skills/annotate-code/SKILL.md", "instructions/AGENTS-commenting-section.md",
+                    "instructions/lint/detekt-comments.yml", "instructions/lint/ruff-docstrings.toml",
+                    "instructions/lint/rust-cargo-lints.toml", "README.md", "MAINTENANCE.md")
+
+    def test_guide_section_numbers_keep_their_meaning(self) -> None:
+        """Sections of COMMENTING.md cited by number elsewhere still exist under that number."""
+        guide = (REPO_ROOT / "instructions" / "COMMENTING.md").read_text(encoding="utf-8")
+        titles = {int(n): t for n, t in re.findall(r"^## (\d+)\. (.+)$", guide, re.MULTILINE)}
+        for number, word in self.GUIDE_SECTIONS.items():
+            self.assertIn(number, titles, f"COMMENTING.md has no section {number}")
+            self.assertIn(word.lower(), titles[number].lower(),
+                          f"COMMENTING.md section {number} is now '{titles[number]}', but other files "
+                          f"cite section {number} as the one about '{word}'. Add new sections at the "
+                          f"end, or update every citation and GUIDE_SECTIONS.")
+        cite = re.compile(r"(?:COMMENTING\.md`? (?:§|section )|guide's section |[( ]section |COMMENTING\.md` §)(\d+)")
+        for rel in self.GUIDE_CITERS:
+            text = (REPO_ROOT / rel).read_text(encoding="utf-8")
+            if rel in ("README.md", "MAINTENANCE.md"):       # these also cite their own sections
+                text = "\n".join(line for line in text.splitlines() if "COMMENTING.md" in line)
+            for number in map(int, cite.findall(text)):
+                self.assertIn(number, self.GUIDE_SECTIONS,
+                              f"{rel} cites COMMENTING.md section {number}; add it to GUIDE_SECTIONS")
+
+    def test_finish_gate_commands_agree_everywhere(self) -> None:
+        """The gate commands in COMMENTING.md section 8 are the ones the README and configs give."""
+        guide = (REPO_ROOT / "instructions" / "COMMENTING.md").read_text(encoding="utf-8")
+        section = guide.split("\n## 8.", 1)[1].split("\n## ", 1)[0]
+        rows = [line.split("|") for line in section.splitlines()
+                if line.startswith("| ") and not line.startswith(("| Language", "|---"))]
+        gates = {row[1].strip(): re.findall(r"`([^`]+)`", row[3]) for row in rows}
+        self.assertEqual(sorted(gates), ["Kotlin", "Lua", "Python", "Rust"])
+        readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+        headers = {"Rust": "rust-cargo-lints.toml", "Python": "ruff-docstrings.toml"}
+        for language, commands in gates.items():
+            self.assertTrue(commands, f"no gate command found for {language}")
+            for command in commands:
+                self.assertIn(command, readme, f"README.md gives a different {language} gate")
+            if language in headers:
+                header = (LINT_DIR / headers[language]).read_text(encoding="utf-8")
+                self.assertIn(commands[0], header, f"{headers[language]} header gives a different gate")
+
+    def test_repo_paths_named_in_docs_exist(self) -> None:
+        """Backticked repo paths in the top-level docs and the installed texts point at real files."""
+        docs = ["README.md", "AGENTS.md", "MAINTENANCE.md", "instructions/COMMENTING.md",
+                "skills/sync-skills-repo/SKILL.md"]
+        pattern = re.compile(r"`((?:instructions|skills|tests)/[A-Za-z0-9_./-]+|install\.py)`")
+        for rel in docs:
+            for path in pattern.findall((REPO_ROOT / rel).read_text(encoding="utf-8")):
+                self.assertTrue((REPO_ROOT / path).exists(), f"{rel} names `{path}`, which does not exist")
+
+    def test_readme_internal_links_resolve(self) -> None:
+        """Every `](#anchor)` link in README.md matches a heading (GitHub's slug rules)."""
+        readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+        slugs = set()
+        for heading in re.findall(r"^#{1,6} (.+)$", readme, re.MULTILINE):
+            slug = re.sub(r"[^a-z0-9 _-]", "", heading.strip().lower()).replace(" ", "-")
+            slugs.add(slug)
+        for anchor in re.findall(r"\]\(#([^)]+)\)", readme):
+            self.assertIn(anchor, slugs, f"README.md links to #{anchor}, but no heading has that slug")
+
+    def test_installer_can_find_what_it_installs(self) -> None:
+        """The installer's markers and heading pattern match the texts it writes into projects."""
+        sys.path.insert(0, str(REPO_ROOT))
+        try:
+            import install
+        finally:
+            sys.path.remove(str(REPO_ROOT))
+        template = (REPO_ROOT / install.TEMPLATE).read_text(encoding="utf-8")
+        self.assertRegex(template.splitlines()[0], install.HEADING_RE,
+                         "the AGENTS.md section's heading no longer matches install.HEADING_RE, so "
+                         "the installer could not find or migrate sections it installed earlier")
+        self.assertEqual(len([ln for ln in template.splitlines() if re.match(r"#{1,6}\s", ln)]), 1,
+                         "the AGENTS.md section must have exactly one heading (its first line)")
+        self.assertRegex(install.BEGIN, install.BEGIN_RE)
+        self.assertTrue(install.TOML_BEGIN.startswith("# dexiotites:begin doc lints"))
+        for skill in install.DEFAULT_SKILLS:
+            self.assertTrue((SKILLS_DIR / skill / "SKILL.md").is_file(), f"default skill {skill} is missing")
+        lints = (LINT_DIR / "rust-cargo-lints.toml").read_text(encoding="utf-8")
+        self.assertRegex(lints, install.LINTS_TABLE_RE)
+        self.assertNotIn("# dexiotites:", lints)
+
 
 if __name__ == "__main__":
     unittest.main()

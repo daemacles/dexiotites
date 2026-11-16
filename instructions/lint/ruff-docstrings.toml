@@ -14,6 +14,10 @@
 #     standard and the annotate-code skill cover that.)
 #   - Test files need a module docstring (file header) but not per-function docstrings.
 #   - Stable rules only; ruff's DOC (pydoclint) rules are preview-only and left out.
+#   - Agent tooling installed in the project (.agents/, .claude/) is not project code and is
+#     not linted.
+
+extend-exclude = [".agents", ".claude"]
 
 [lint]
 extend-select = ["D"]
