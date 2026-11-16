@@ -11,3 +11,8 @@ pub fn parse_again(text: &str) -> Result<f64, std::num::ParseFloatError> {
 pub unsafe fn read(ptr: *const u32) -> u32 {
     unsafe { *ptr }
 }
+
+/// Returns the first byte of `bytes`.
+pub fn first(bytes: &[u8]) -> u8 {
+    *bytes.first().unwrap()
+}

@@ -94,8 +94,11 @@ class TestDocLinterConfigs(unittest.TestCase):
                 passed = clippy.returncode == 0 and doc.returncode == 0
                 self.assertEqual(passed, should_pass, f"{case}:\n{clippy.stderr}{doc.stderr}")
                 if not should_pass:
-                    self.assertIn("missing documentation", clippy.stderr)
-                    self.assertIn("safety comment", clippy.stderr)
+                    # Each shipped lint must be reported as an error, not merely a warning.
+                    for finding in ("missing documentation for", "missing `# Errors` section",
+                                    "missing `# Panics` section", "missing a `# Safety` section",
+                                    "unsafe block missing a safety comment"):
+                        self.assertRegex(clippy.stderr, rf"(?m)^error: .*{re.escape(finding)}")
                     self.assertIn("unresolved link", doc.stderr)
                 else:
                     # The good fixture has a clippy style warning: the gate must show it, not fail on it.
