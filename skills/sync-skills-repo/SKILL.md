@@ -1,6 +1,6 @@
 ---
-name: sync-skills-repo
-description: Copy Jim's own account skills into his dexiotites GitHub repo (skills/ folder), then commit and push. Use when Jim asks to sync, back up, or update the skills repo, or right after a new skill has been saved. Optional argument is the path to an existing local clone of the repo.
+name: "sync-skills-repo"
+description: "Copy Jim's own account skills into his dexiotites GitHub repo (skills/ folder), then commit and push. Use when Jim asks to sync, back up, or update the skills repo, or right after a new skill has been saved. Optional argument is the path to an existing local clone of the repo."
 ---
 
 # Sync account skills into the dexiotites repo
@@ -87,7 +87,9 @@ applies when it saves a skill (quoted frontmatter values, a missing final newlin
 Leave `instructions/`, `docs/`, `tests/`, and `MAINTENANCE.md` alone. For a skill **new** to the
 repo, also add a row for it to the appropriate skills table in `README.md`, writing a concise
 one-sentence summary of what it does (omitting `"Use when…"` trigger instructions so it matches
-existing rows).
+existing rows). Fill in the row's **External requirements** cell too: every connector, CLI tool
+and external skill the skill uses, with "(optional; …)" for those it can work without. Never
+leave the cell empty; the hygiene tests fail on an empty cell.
 
 ## 4. Validate, commit, and push
 
