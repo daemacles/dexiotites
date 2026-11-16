@@ -14,6 +14,9 @@ into coding projects, plus mirrors of the personal Claude workflow skills built 
 | `tests/` | Unit and repository-hygiene tests (run `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v`). |
 | `docs/` | Reserved for specs and design notes. |
 
+Adding a language or an agent harness: see [Extending to a new language or harness](#extending-to-a-new-language-or-harness).
+Released under the [MIT License](LICENSE).
+
 **Prompting guide:** the living guide to working with LLMs is a Google Doc,
 [Prompting Guide: Working with Claude](https://docs.google.com/document/d/1RlEDKMVg3FysnslHnX-OeYwoRcQ_tGh_FbuuCB_UjD8/edit)
 (also holds the paste-ready `<prompt_coaching>` standing instructions tab; snapshot a copy into
@@ -44,8 +47,8 @@ How each agent finds them:
 From a clone of this repo:
 
 ```bash
-python3 ~/programming/dexiotites.git/install.py                 # the project in the current directory
-python3 ~/programming/dexiotites.git/install.py ~/projects/a ~/projects/b    # or several at once
+python3 /path/to/dexiotites/install.py                             # the project in the current directory
+python3 /path/to/dexiotites/install.py ~/projects/a ~/projects/b   # or several at once
 ```
 
 With no clone at hand, this fetches one into a temporary folder and runs it:
@@ -163,6 +166,111 @@ detekt {
 | Claude desktop app (account skill) | Connect the project folder, then `/annotate-code <path>` or ask. The account version writes its embedded checker to a temporary file. |
 | By hand | `python3 .agents/skills/annotate-code/scripts/comment_diff_check.py --strict <files>` from the project root. With `--strict`, exit code 0 guarantees every named file is a supported type (`.kt`, `.kts`, `.rs`, `.py`, `.lua`), has a `HEAD` baseline, and changed comments only. Without `--strict`, unsupported (`SKIP`) and untracked (`NEW`) files are reported without failing whole-repo `git diff` scans. |
 
+## Extending to a new language or harness
+
+Both kinds of extension work the same way: add the new thing in a short list of known places,
+then let the test suite name whatever was left out. The list is the same whether an agent or a
+person makes the edits. What differs is who has to bring the knowledge the repo cannot hold,
+so the two workflows are described separately below.
+
+Run `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v` after each row.
+
+### What a new language touches
+
+| # | Where | What to add | What checks it |
+|---|---|---|---|
+| 1 | `instructions/COMMENTING.md` §6 | A subsection for the language: doc-comment syntax, how parameters, return values and failures are written, the file-header form, known pitfalls. | Review only. This is the judgment part. |
+| 2 | `skills/annotate-code/scripts/comment_diff_check.py` | A function that strips comments from the language's source, wired into `code_only` under the new file suffix. Write the tests first: `MAINTENANCE.md` §4 lists the lexer failure classes to cover. | `tests/test_comment_diff_check.py` |
+| 3 | `skills/annotate-code/SKILL.md` | Replace the fenced block under `<!-- embedded-file: scripts/comment_diff_check.py -->` with the script's new contents, and add the suffix where the skill lists supported types. | Hygiene tests: byte parity, and `test_checker_languages_are_documented_everywhere` (add the new suffix set to its `supported`) |
+| 4 | `instructions/lint/` | A doc-linter config that enforces documentation rules only, with a header saying what it matches in the guide. | `tests/test_lint_configs.py` |
+| 5 | `tests/fixtures/lint/<language>/good` and `bad` | A compliant and a non-compliant sample project, plus a test in `tests/test_lint_configs.py` that runs the gate on both. The bad one should break each rule the config enforces. | The test itself; `tests/mutation_audit.py` |
+| 6 | `instructions/COMMENTING.md` §8 | A table row: tool, config name, finish-gate command. The tests run this exact command. | `test_finish_gate_commands_agree_everywhere` (add the language to its list) |
+| 7 | `install.py` | One `LintConfig` entry in `LINT_CONFIGS`: suffixes, config name, where it is installed, and which file names mean a project already has its own config. | `tests/test_install.py` (copy `test_python_and_kotlin_configs`) |
+| 8 | `README.md` | The language and suffix wherever supported ones are listed, and a row in the [Doc linters](#doc-linters-tier-1) table. | Hygiene tests |
+
+- A language with no usable doc linter can stop after row 3: the guide and the retrofit skill
+  work without Tier 1.
+- A linter configured inside a file the project owns (as Rust's is, in `Cargo.toml`) cannot be a
+  `LintConfig` entry. It needs a planner that maintains a marked block; copy `plan_cargo_lints`.
+- Rows 2 and 3 change a skill. The maintainer's Claude account holds the primary copy of each
+  skill, so after a contribution lands, `sync-skills-repo` reports that skill as `repo-ahead` and
+  the maintainer merges it into the account. Contributors only edit the repo.
+
+### What a new harness touches
+
+A harness is the program that runs the agent (Claude Code, Antigravity, and so on). The
+installer puts the real content in `AGENTS.md` and `.agents/skills/<name>/`. A harness that
+reads both by itself needs no code at all. For any other, first establish four facts **from the
+harness's current documentation** (these change often, and a model's recollection of them is
+frequently out of date):
+
+1. Which file does it load into every session, and does it read `AGENTS.md` itself?
+2. If not, can its always-loaded file import another file, and with what syntax?
+3. Where does it discover skills (folders containing a `SKILL.md`)? Does it read `.agents/skills/`?
+4. Does it follow symlinks in that folder?
+
+| Where | What to add | What checks it |
+|---|---|---|
+| `install.py` | One `Harness` entry in `HARNESSES`: the always-loaded file, the import line (leave it empty and the file becomes a symlink to `AGENTS.md`), and the skills folder (each skill is symlinked into it). | `tests/test_install.py` (copy `test_one_harness_entry_supports_a_new_harness`) |
+| `README.md` | The harness under "How each agent finds them", the files it adds to the installed-files table, and a row in [Running annotate-code](#running-annotate-code). | Hygiene test (every `HARNESSES` name appears) |
+| `skills/*/SKILL.md` | Nothing, usually. Re-read `MAINTENANCE.md` §1 with the new harness in mind: skills must activate from their description alone, and must not assume tools only one harness has. | Review only |
+
+If the harness has no skills mechanism or does not follow symlinks, skip the skills folder. The
+`AGENTS.md` section names the skill's path, so an agent can still read
+`.agents/skills/annotate-code/SKILL.md` as an ordinary file and follow it.
+
+### (a) Having an agent do the work
+
+The repo already steers an agent: `AGENTS.md` sends it to `MAINTENANCE.md` and the test gate, and
+the tables above are its checklist. Your part is the knowledge it cannot get from the repo, and
+the review of what no test can judge. Paste one of these, filled in:
+
+```text
+Add <language> support to dexiotites. Follow README.md, "Extending to a new language or
+harness", row by row, on a new branch.
+- Doc-comment convention to follow: <link to the language's official documentation guide>
+- Doc linter: <tool and version>. It must be limited to documentation rules; stop and tell
+  me if it cannot be.
+- What counts as public API in this language: <for example: exported identifiers>
+- Traps for the comment-only checker: <nested comments? raw strings? line breaks that end
+  statements? operators that look like comment markers?>
+- Exemplar project for the guide's table: <a well-commented open-source project>
+Run the tests after each row and finish with `python3 tests/mutation_audit.py`.
+```
+
+```text
+Add support for the <harness> agent harness to dexiotites. Follow README.md, "Extending to a
+new language or harness".
+Facts, from <documentation link>, checked on <date>:
+- Always-loaded file: <name>. Reads AGENTS.md itself: <yes/no>
+- Import syntax in that file: <syntax, or "none">
+- Skills folder: <path>. Reads .agents/skills/ itself: <yes/no>
+- Follows symlinks there: <yes/no/unknown>
+If any fact is "unknown", stop and tell me what to test by hand before writing code.
+```
+
+Then review, in this order:
+1. The new §6 subsection against the convention you linked: is it the language's real practice?
+2. The bad fixture: does it break every rule the config enforces, and does the gate report each one?
+3. `python3 tests/mutation_audit.py`: no survivors.
+4. `python3 install.py --check <a real project in that language or harness>`: the plan it prints
+   is what you expect, and nothing of the project's own would be replaced.
+
+### (b) Doing the work by hand
+
+Same tables, same order. The practical differences:
+
+- **Start from the fixtures** (row 5 before row 4): write the good and bad sample projects, then
+  tune the linter config until the gate passes one and fails the other. It is the fastest way
+  to learn what the linter can enforce.
+- **Edit the checker as a normal Python file**, with its tests open, then paste the finished
+  file over the embedded block in `SKILL.md`. The hygiene test fails until the two match byte
+  for byte.
+- **Python you add follows this repo's own standard** (`instructions/COMMENTING.md`); the gate is
+  `ruff check --select D .`, and the test suite runs it when ruff is installed.
+- **Finish with** `python3 tests/mutation_audit.py`, and add a mutation for each new rule you
+  made the tests enforce, so a later edit cannot quietly undo it.
+
 ---
 
 ## Skills
@@ -200,8 +308,18 @@ Tailored to Jim's Claude Desktop setup, Google Doc prompting guide, and this rep
   `comment_diff_check.py` and `sync-skills-repo` embeds `sync_classify.py`; **always edit each
   script and its embedded block together**, and verify with `python3 -m unittest discover -s tests`.
 - **New skills:** add each new account skill here by running `sync-skills-repo`.
+- **Contributions to a skill:** edit the copy in this repo. The next `sync-skills-repo` run
+  reports it as `repo-ahead`, and the maintainer merges it into the account copy.
 - **Repo to projects:** a project's copies come from `install.py` and are never edited in the
   project. After changing `instructions/` or `skills/annotate-code/` here, rerun the installer
   in each project that uses them; `python3 install.py --check <project> ...` reports which are
   behind. So a change to a skill travels: Claude account, then this repo (`sync-skills-repo`),
   then projects (`install.py`).
+
+---
+
+## License
+
+[MIT](LICENSE). Files the installer copies into a project (the guide, the skill and its
+checker, the linter configs) are covered by the same license; `.dexiotites.json` in the project
+records the repository they came from.

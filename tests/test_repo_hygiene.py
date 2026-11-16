@@ -336,6 +336,12 @@ class TestRepoHygiene(unittest.TestCase):
         self.assertTrue(install.TOML_BEGIN.startswith("# dexiotites:begin doc lints"))
         for skill in install.DEFAULT_SKILLS:
             self.assertTrue((SKILLS_DIR / skill / "SKILL.md").is_file(), f"default skill {skill} is missing")
+        readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+        for cfg in install.LINT_CONFIGS:
+            self.assertTrue((LINT_DIR / cfg.template).is_file(), f"LINT_CONFIGS names missing {cfg.template}")
+            self.assertIn(f"`{cfg.dest}`", readme, f"README.md does not say where {cfg.template} is installed")
+        for harness in install.HARNESSES:
+            self.assertIn(harness.name, readme, f"README.md does not mention the {harness.name} harness")
         lints = (LINT_DIR / "rust-cargo-lints.toml").read_text(encoding="utf-8")
         self.assertRegex(lints, install.LINTS_TABLE_RE)
         self.assertNotIn("# dexiotites:", lints)

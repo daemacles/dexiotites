@@ -488,5 +488,69 @@ class TestOtherWaysToRunIt(InstallTestCase):
         self.assertEqual(ok.returncode, 0, ok.stdout + ok.stderr)
 
 
+class TestExtensionTables(InstallTestCase):
+    """The README's claim that one table entry in install.py adds a linter or a harness."""
+
+    def test_one_lint_config_entry_supports_a_new_language(self) -> None:
+        (self.source / "instructions/lint/godoc-lint.yml").write_text("rules: [exported]\n")
+        self.edit_source("install.py", "LINT_CONFIGS = (\n",
+                         'LINT_CONFIGS = (\n    LintConfig("Go", (".go",), "godoc-lint.yml", '
+                         '".godoc-lint.yml", rivals=(".godoc-lint.yml",)),\n')
+        self.commit_source("add Go")
+        fresh = self.project("fresh", {"main.go": "package main\n"})
+        res = self.install(fresh)
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        self.assertEqual((fresh / ".godoc-lint.yml").read_text(), "rules: [exported]\n")
+        self.assertIn(".godoc-lint.yml", json.loads((fresh / ".dexiotites.json").read_text())["files"])
+        before = snapshot(fresh)
+        self.assertEqual(self.install(fresh).returncode, 0)
+        self.assertEqual(snapshot(fresh), before)
+
+        own = self.project("own", {"main.go": "package main\n", ".godoc-lint.yml": "rules: []\n"})
+        res = self.install(own)
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        self.assertEqual((own / ".godoc-lint.yml").read_text(), "rules: []\n")
+        self.assertIn("Go: existing linter config", res.stdout)
+
+        rust_only = self.project("rust-only")
+        self.assertEqual(self.install(rust_only).returncode, 0)
+        self.assertFalse((rust_only / ".godoc-lint.yml").exists())
+
+    def test_one_harness_entry_supports_a_new_harness(self) -> None:
+        self.edit_source("install.py", "HARNESSES = (\n",
+                         'HARNESSES = (\n'
+                         '    Harness("Importer", rules_file="IMPORTER.md", import_line="!include AGENTS.md", '
+                         'skills_dir=".importer/tools/skills"),\n'
+                         '    Harness("Linker", rules_file=".linker/RULES.md"),\n')
+        self.commit_source("add two harnesses")
+        proj = self.project(files={"Cargo.toml": CARGO, "src/main.rs": "fn main() {}\n",
+                                   "IMPORTER.md": "House rules.\n"})
+        res = self.install(proj)
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        # A harness with an import syntax: the line is added, existing content kept, skills linked.
+        self.assertEqual((proj / "IMPORTER.md").read_text(), "!include AGENTS.md\n\nHouse rules.\n")
+        self.assertEqual(os.readlink(proj / ".importer/tools/skills/annotate-code"),
+                         "../../../.agents/skills/annotate-code")
+        self.assertTrue((proj / ".importer/tools/skills/annotate-code/SKILL.md").is_file())
+        # A harness without one: its rules file is a symlink that resolves to AGENTS.md.
+        self.assertEqual(os.readlink(proj / ".linker/RULES.md"), "../AGENTS.md")
+        self.assertIn(MARK, (proj / ".linker/RULES.md").read_text())
+        # Claude Code's entry still works alongside them.
+        self.assertEqual((proj / "CLAUDE.md").read_text(), "@AGENTS.md\n")
+        before = snapshot(proj)
+        self.assertEqual(self.install(proj).returncode, 0)
+        self.assertEqual(snapshot(proj), before)
+
+    def test_rules_file_in_the_way_of_a_symlink_is_left_alone(self) -> None:
+        self.edit_source("install.py", "HARNESSES = (\n",
+                         'HARNESSES = (\n    Harness("Linker", rules_file="RULES.md"),\n')
+        self.commit_source("add a harness")
+        proj = self.project(files={"RULES.md": "Our own rules.\n"})
+        res = self.install(proj)
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        self.assertEqual((proj / "RULES.md").read_text(), "Our own rules.\n")
+        self.assertIn("Linker will not load the commenting rules", res.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

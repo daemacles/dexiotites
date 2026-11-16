@@ -33,6 +33,10 @@ Safety rules:
 
 Exit codes: 0 done or already current; 1 conflicts, or `--check` found pending changes;
 2 usage or environment error. Requires Python 3.9 or newer and git.
+
+Extending: each supported doc linter and each agent harness is one entry in the `LINT_CONFIGS`
+and `HARNESSES` tables below. The README section "Extending to a new language or harness" lists
+the other files a new language or harness touches.
 """
 
 from __future__ import annotations
@@ -67,6 +71,77 @@ LINTS_TABLE_RE = re.compile(r"^\[(?:workspace\.)?lints\b", re.MULTILINE)
 # Top-level folders never scanned when detecting a project's languages. Dot-folders are
 # skipped too, so the installed checker script does not make every project "Python".
 SKIP_DIRS = {"target", "build", "node_modules", "dist", "venv", "__pycache__"}
+
+
+@dataclass(frozen=True)
+class LintConfig:
+    """A doc-linter config that is installed into a project as a file of its own.
+
+    Adding an entry to `LINT_CONFIGS` is the installer's whole share of supporting a new
+    language. A linter that is configured inside a file the project owns cannot be an entry:
+    it needs its own planner that edits a marked block, as `plan_cargo_lints` does for Rust.
+
+    Attributes:
+        language: Name used in messages.
+        suffixes: File suffixes (with the dot) whose presence means the project uses the language.
+        template: The config's file name under `instructions/lint/`.
+        dest: Project-relative path the config is installed at.
+        rivals: File names that, anywhere in the project, mean the project already configures
+            this linter itself. The installer then installs nothing and asks for a manual merge.
+        rival_markers: `(file name, text)` pairs; a file of that name containing the text is
+            also an existing config (a `pyproject.toml` holding a `[tool.ruff` table).
+        manual_step: A step the installer cannot do, such as a build-file edit. Printed as a
+            note on every run. Empty if there is none.
+    """
+
+    language: str
+    suffixes: tuple[str, ...]
+    template: str
+    dest: str
+    rivals: tuple[str, ...] = ()
+    rival_markers: tuple[tuple[str, str], ...] = ()
+    manual_step: str = ""
+
+
+LINT_CONFIGS = (
+    LintConfig("Python", (".py",), "ruff-docstrings.toml", "ruff.toml",
+               rivals=("ruff.toml", ".ruff.toml"), rival_markers=(("pyproject.toml", "[tool.ruff"),)),
+    LintConfig("Lua", (".lua",), "luarc-docs.json", ".luarc.json",
+               rivals=(".luarc.json", ".luarc.jsonc")),
+    LintConfig("Kotlin", (".kt",), "detekt-comments.yml", "config/detekt/detekt-comments.yml",
+               manual_step="the detekt Gradle plugin block is a manual edit; see 'Kotlin build "
+                           "file' in the dexiotites README"),
+)
+
+
+@dataclass(frozen=True)
+class Harness:
+    """What one agent harness needs in order to find the installed rules and skills.
+
+    `AGENTS.md` and `.agents/skills/<name>/` are where the installer puts the real content. A
+    harness that reads both by itself (Antigravity does) needs no entry. Add an entry to
+    `HARNESSES` for a harness that looks somewhere else.
+
+    Attributes:
+        name: Name used in messages.
+        rules_file: Project-relative file the harness always loads in place of AGENTS.md, or
+            empty if it loads AGENTS.md itself.
+        import_line: The line that makes `rules_file` pull in AGENTS.md, in the harness's own
+            import syntax. Empty if the harness has none: `rules_file` is then created as a
+            symlink to AGENTS.md.
+        skills_dir: Project-relative folder the harness discovers skills in, or empty if it
+            reads `.agents/skills/` itself. Each installed skill is symlinked into it.
+    """
+
+    name: str
+    rules_file: str = ""
+    import_line: str = ""
+    skills_dir: str = ""
+
+
+HARNESSES = (
+    Harness("Claude Code", rules_file="CLAUDE.md", import_line="@AGENTS.md", skills_dir=".claude/skills"),
+)
 
 
 @dataclass
@@ -175,7 +250,7 @@ def load_manifest(project: Path) -> dict:
 
 def lint_files(source: Path, project: Path, files: list[str],
                recorded: dict) -> tuple[dict[str, Path], list[Change]]:
-    """Choose the standalone linter configs to copy for the languages the project uses.
+    """Choose the `LINT_CONFIGS` entries to copy for the languages the project uses.
 
     A config is copied when its language is present and the project has no config of that
     kind, or the existing one was installed by this script (it is in the manifest).
@@ -190,35 +265,24 @@ def lint_files(source: Path, project: Path, files: list[str],
         A mapping of project-relative destination to source file, and notes for configs that
         need a manual merge or a manual build-file edit.
     """
-    lint = source / "instructions" / "lint"
-    present = set(files)
     suffixes = {Path(f).suffix for f in files}
     out: dict[str, Path] = {}
     notes: list[Change] = []
-
-    if ".py" in suffixes:
-        theirs = [f for f in files if Path(f).name in ("ruff.toml", ".ruff.toml")
-                  and not (f == "ruff.toml" and f in recorded)]
-        theirs += [f for f in files if Path(f).name == "pyproject.toml"
-                   and "[tool.ruff" in _read_text(project / f)]
+    for cfg in LINT_CONFIGS:
+        if not suffixes.intersection(cfg.suffixes):
+            continue
+        theirs = [f for f in files if Path(f).name in cfg.rivals
+                  and not (f == cfg.dest and f in recorded)]
+        theirs += [f for f in files for name, text in cfg.rival_markers
+                   if Path(f).name == name and text in _read_text(project / f)]
         if theirs:
-            notes.append(Change("ruff.toml", "note",
-                                f"Python: existing ruff config ({', '.join(theirs)}) left as is; "
-                                "merge instructions/lint/ruff-docstrings.toml into it by hand"))
-        else:
-            out["ruff.toml"] = lint / "ruff-docstrings.toml"
-    if ".lua" in suffixes:
-        if ".luarc.jsonc" in present or (".luarc.json" in present and ".luarc.json" not in recorded):
-            notes.append(Change(".luarc.json", "note",
-                                "Lua: existing .luarc.json left as is; merge the two diagnostics "
-                                "objects from instructions/lint/luarc-docs.json into it by hand"))
-        else:
-            out[".luarc.json"] = lint / "luarc-docs.json"
-    if ".kt" in suffixes:
-        out["config/detekt/detekt-comments.yml"] = lint / "detekt-comments.yml"
-        notes.append(Change("config/detekt/detekt-comments.yml", "note",
-                            "Kotlin: the detekt Gradle plugin block is a manual edit; see "
-                            "'Kotlin build file' in the dexiotites README"))
+            notes.append(Change(cfg.dest, "note",
+                                f"{cfg.language}: existing linter config ({', '.join(theirs)}) left as "
+                                f"is; merge instructions/lint/{cfg.template} into it by hand"))
+            continue
+        out[cfg.dest] = source / "instructions" / "lint" / cfg.template
+        if cfg.manual_step:
+            notes.append(Change(cfg.dest, "note", f"{cfg.language}: {cfg.manual_step}"))
     return out, notes
 
 
@@ -374,51 +438,63 @@ def plan_agents_md(source: Path, project: Path) -> Change:
 # --------------------------------------------------------------------------- other files
 
 
-def plan_claude_md(project: Path) -> Change:
-    """Plan the `@AGENTS.md` import that makes Claude Code load AGENTS.md.
+def plan_rules_file(project: Path, harness: Harness) -> list[Change]:
+    """Plan the file that makes `harness` load AGENTS.md, if it does not load it by itself.
 
-    A CLAUDE.md that is a symlink is left alone: it normally points at AGENTS.md already, and
-    writing through it would edit its target. So is one that AGENTS.md is a symlink to, where
-    the import would make the file import itself.
+    With an import line, the line is put at the top of the harness's rules file. Without one,
+    the rules file is created as a symlink to AGENTS.md. A rules file that is already a
+    symlink is left alone: it normally points at AGENTS.md, and writing through it would edit
+    its target. So is one that AGENTS.md is a symlink to, where the import would make the file
+    import itself.
     """
-    path = project / "CLAUDE.md"
+    if not harness.rules_file:
+        return []
+    rel = harness.rules_file
+    path = project / rel
     if path.is_symlink() or (path.exists() and (project / "AGENTS.md").resolve() == path.resolve()):
-        return Change("CLAUDE.md", "unchanged")
+        return [Change(rel, "unchanged")]
+    if not harness.import_line:
+        if path.exists():
+            return [Change(rel, "note", f"exists and is not a symlink to AGENTS.md: left as is; "
+                           f"{harness.name} will not load the commenting rules from it")]
+        return [Change(rel, "create", link=os.path.relpath("AGENTS.md", Path(rel).parent))]
     if not path.exists():
-        return Change("CLAUDE.md", "create", content=b"@AGENTS.md\n")
+        return [Change(rel, "create", content=f"{harness.import_line}\n".encode("utf-8"))]
     old = path.read_text(encoding="utf-8")
-    if any(line.strip().startswith("@AGENTS.md") for line in old.splitlines()):
-        return Change("CLAUDE.md", "unchanged")
-    return Change("CLAUDE.md", "update", "added the @AGENTS.md import line",
-                  content=("@AGENTS.md\n\n" + old).encode("utf-8"))
+    if any(line.strip().startswith(harness.import_line) for line in old.splitlines()):
+        return [Change(rel, "unchanged")]
+    return [Change(rel, "update", f"added the {harness.import_line} import line",
+                   content=f"{harness.import_line}\n\n{old}".encode("utf-8"))]
 
 
-def plan_skill_links(project: Path, skills: list[str]) -> list[Change]:
-    """Plan the `.claude/skills/<skill>` symlinks that let Claude Code see each skill.
+def plan_skill_links(project: Path, skills: list[str], harness: Harness) -> list[Change]:
+    """Plan the symlinks that let `harness` see each skill in its own skills folder.
 
-    Nothing is planned for a skill Claude Code can already reach at that path (for example
-    when `.claude/skills` is itself a symlink to `.agents/skills`). A real folder or file in
-    the way is reported and left alone.
+    Nothing is planned for a skill the harness can already reach there (for example when its
+    skills folder is itself a symlink to `.agents/skills`). A real folder or file in the way
+    is reported and left alone.
     """
+    if not harness.skills_dir:
+        return []
     changes = []
-    shared = (project / ".claude" / "skills").resolve() == (project / ".agents" / "skills").resolve()
+    canonical = project / ".agents" / "skills"
+    shared = (project / harness.skills_dir).resolve() == canonical.resolve()
     for skill in skills:
-        rel = f".claude/skills/{skill}"
+        rel = f"{harness.skills_dir}/{skill}"
         if shared:
             changes.append(Change(rel, "unchanged"))
             continue
         link = project / rel
-        target = f"../../.agents/skills/{skill}"
-        real = (project / ".agents" / "skills" / skill).resolve()
+        target = os.path.relpath(f".agents/skills/{skill}", harness.skills_dir)
         if link.is_symlink() and os.readlink(link) == target:
             changes.append(Change(rel, "unchanged"))
-        elif link.exists() and link.resolve() == real:
+        elif link.exists() and link.resolve() == (canonical / skill).resolve():
             changes.append(Change(rel, "unchanged"))
         elif link.is_symlink():
             changes.append(Change(rel, "update", "symlink repointed", link=target))
         elif link.exists():
             changes.append(Change(rel, "note", "exists and is not a symlink to "
-                                  f".agents/skills/{skill}: left as is; Claude Code may load a stale copy"))
+                                  f".agents/skills/{skill}: left as is; {harness.name} may load a stale copy"))
         else:
             changes.append(Change(rel, "create", link=target))
     return changes
@@ -493,8 +569,9 @@ def plan(source: Path, project: Path, skills: list[str] | None, lint: bool | Non
     files = project_files(project)
     changes = plan_copies(source, project, manifest, skills, lint, files)
     changes.append(plan_agents_md(source, project))
-    changes.append(plan_claude_md(project))
-    changes.extend(plan_skill_links(project, skills))
+    for harness in HARNESSES:
+        changes.extend(plan_rules_file(project, harness))
+        changes.extend(plan_skill_links(project, skills, harness))
     changes.extend(plan_cargo_lints(source, project, lint))
     if force:
         for c in changes:

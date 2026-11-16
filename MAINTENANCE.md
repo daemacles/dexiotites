@@ -82,9 +82,9 @@ one fault at a time and reports any that the suite fails to catch.
   5. Line breaks the language treats as meaningful (Kotlin statement ends outside `()`/`[]`), and
      comment syntaxes that collide with operators (Lua `--` vs `//` floor division; `]]` inside a
      Lua long comment).
-- **Adding a language:** extend `code_only`, add the language to `COMMENTING.md` §6 and §8, add a
-  config in `instructions/lint/` with good/bad fixtures and a test in `tests/test_lint_configs.py`.
-  The hygiene tests check that README and `annotate-code` list every supported extension.
+- **Adding a language or a harness:** follow the tables in `README.md`, "Extending to a new
+  language or harness", row by row. If you find a place they do not list, add the row.
+  *(Prevents the how-to and the code drifting apart.)*
 
 ## 5. Evolving this file
 
