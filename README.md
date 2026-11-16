@@ -81,13 +81,19 @@ step. Requires Python 3.9+ and git.
 unchanged since the last install, files identical to any version this repo has shipped (so
 older hand-made installs upgrade cleanly), and the marked block in `AGENTS.md`. If anything
 else is in the way (a copy edited in the project, or an unrelated file with the same name), it
-lists the conflicts, **writes nothing**, and exits with code 1. Decide what the local edit was
-for: move it out of the managed file, or make the change in this repo so every project gets
-it. Use `--force` only to discard the local edits. Agents: on exit code 1, stop and show the
-user the conflict list; do not add `--force` on your own.
+lists the conflicts, **writes nothing**, and exits with code 1. `--force` replaces the
+conflicting files, and whatever was edited into them is lost, so first copy out anything worth
+keeping. Agents: on exit code 1, stop and show the user the conflict list; do not add `--force`
+on your own.
 
-**Do not edit the installed copies in a project.** Change the master in this repo, then rerun
-the installer in each project. `--check` in a project tells you whether it is behind.
+**Do not edit the installed copies in a project.** Rules for one project only go in that
+project's `AGENTS.md`, outside the marked block. Rules for every project go in the masters in
+this repo; then rerun the installer in each project. `--check` in a project tells you whether
+it is behind.
+
+**After a first install in a project that already has code,** expect the doc-linter gate to
+fail on the existing files. That is the linter doing its job, not a broken install: clear it
+file by file with the `annotate-code` skill ([Retrofitting existing code](#retrofitting-existing-code)).
 
 **As a git submodule (optional, not recommended).** The installer also runs from a submodule:
 `git submodule add https://github.com/daemacles/dexiotites .dexiotites && python3 .dexiotites/install.py`,
