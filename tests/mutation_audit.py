@@ -29,7 +29,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 # Fast modules first: the audit stops at the first module that fails.
-MODULES = ["test_repo_hygiene", "test_sync_classify", "test_comment_diff_check",
+MODULES = ["test_repo_hygiene", "test_sync_classify", "test_comment_diff_check", "test_comment_load",
            "test_install", "test_lint_configs"]
 
 INSTALL = "install.py"
@@ -133,6 +133,10 @@ MUTATIONS: list[dict] = [
     dict(id="ruff-convention-changed", why="shipped ruff config enforces a different docstring style than the guide",
          file="instructions/lint/ruff-docstrings.toml", old='convention = "google"',
          new='convention = "numpy"', needs="ruff"),
+    dict(id="voice-counter-edited-alone", why="comment_load.py edited without its embedded copy in SKILL.md",
+         file="skills/annotate-code/scripts/comment_load.py", old="if len(names) > 2:", new="if len(names) > 3:"),
+    dict(id="voice-section-renumbered", why="the guide's Voice section stops being section 10, which the skill and counter cite",
+         file=GUIDE, old="## 10. Voice: write for a reader with a small working memory", new="## 11. Voice"),
     # ---- known gaps: need a reader, not a test ----------------------------------------
     dict(id="rule-reworded-in-guide-only", gap=True,
          why="a rule's meaning changes in the guide while the AGENTS.md summary keeps the old wording "

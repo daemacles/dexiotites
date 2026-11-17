@@ -258,7 +258,7 @@ class TestRepoHygiene(unittest.TestCase):
     # Citations live in annotate-code's SKILL.md, the AGENTS.md section, the lint config
     # headers, README.md and MAINTENANCE.md, and in every project that installed them.
     GUIDE_SECTIONS = {2: "Required", 3: "Prohibited", 4: "Rationale", 5: "Keeping comments true",
-                      6: "Language specifics", 8: "linters", 9: "Retrofitting"}
+                      6: "Language specifics", 8: "linters", 9: "Retrofitting", 10: "Voice"}
     GUIDE_CITERS = ("skills/annotate-code/SKILL.md", "instructions/AGENTS-commenting-section.md",
                     "instructions/lint/detekt-comments.yml", "instructions/lint/ruff-docstrings.toml",
                     "instructions/lint/rust-cargo-lints.toml", "README.md", "MAINTENANCE.md")

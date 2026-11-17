@@ -21,8 +21,8 @@ This repository holds reusable instructions (`instructions/`) and agent skills (
      account copy should also be updated (otherwise the next `sync-skills-repo` run will pause
      and ask to merge).
 3. **Embedded helper files must stay byte-for-byte identical.**
-   - `skills/annotate-code/scripts/comment_diff_check.py` and
-     `skills/sync-skills-repo/scripts/sync_classify.py` are generated from the
+   - `skills/annotate-code/scripts/comment_diff_check.py`, `skills/annotate-code/scripts/comment_load.py`
+     and `skills/sync-skills-repo/scripts/sync_classify.py` are generated from the
      `<!-- embedded-file: scripts/... -->` block at the bottom of their skill's `SKILL.md`.
    - Never edit one without updating the other, keep the executable bit (`chmod +x`) on `#!`
      scripts, and do not leave `__pycache__` directories inside `skills/`.

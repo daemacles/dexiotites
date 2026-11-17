@@ -83,6 +83,9 @@ one fault at a time and reports any that the suite fails to catch.
   5. Line breaks the language treats as meaningful (Kotlin statement ends outside `()`/`[]`), and
      comment syntaxes that collide with operators (Lua `--` vs `//` floor division; `]]` inside a
      Lua long comment).
+- **`comment_load.py` is advisory:** it counts the sentence rules of `COMMENTING.md` §10 and never
+  blocks. When a rule in §10 changes, change the matching check and its test in
+  `tests/test_comment_load.py`.
 - **Adding a language or a harness:** follow the tables in `README.md`, "Extending to a new
   language or harness", row by row. If you find a place they do not list, add the row.
   *(Prevents the how-to and the code drifting apart.)*
