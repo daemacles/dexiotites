@@ -9,7 +9,7 @@ Run without a clone, the script fetches one and reruns itself from it:
 
     curl -fsSL https://raw.githubusercontent.com/daemacles/dexiotites/main/install.py | python3 -
 
-What it puts in a project (all plain files, so a fresh clone of the project needs nothing else):
+What it puts in a project. All of it is plain files, so a fresh clone needs nothing else:
 
     docs/COMMENTING.md                 the full standard
     .agents/skills/<skill>/            each requested skill (default: annotate-code)
@@ -21,9 +21,9 @@ What it puts in a project (all plain files, so a fresh clone of the project need
                                        config/detekt/detekt-comments.yml (Kotlin)
     .dexiotites.json                   manifest: source commit, options, hash of each copied file
 
-It then commits those paths, and only those, with the message
-`dexiotites installed to remote @ <hash>` (or `updated`), where <hash> is the first six
-characters of the dexiotites commit installed. Pass `--dont-add` to leave them uncommitted.
+It then commits those paths, and only those. The message is
+`dexiotites installed to remote @ <hash>`, or `updated` for a later run. The hash is the first
+six characters of the dexiotites commit installed. Pass `--dont-add` to leave them uncommitted.
 
 Safety rules:
     - Nothing is written unless every change is safe. A copied file is safe to replace when it
@@ -40,7 +40,7 @@ Safety rules:
       Other staged or modified files are never included.
 
 Exit codes: 0 done or already current; 1 conflicts, or `--check` found pending changes or an
-uncommitted install; 2 usage or environment error (including a commit git refused).
+uncommitted install; 2 usage or environment error, which includes a commit git refused.
 Requires Python 3.9 or newer and git.
 
 Extending: each supported doc linter and each agent harness is one entry in the `LINT_CONFIGS`
@@ -128,9 +128,9 @@ LINT_CONFIGS = (
 class Harness:
     """What one agent harness needs in order to find the installed rules and skills.
 
-    `AGENTS.md` and `.agents/skills/<name>/` are where the installer puts the real content. A
-    harness that reads both by itself (Antigravity does) needs no entry. Add an entry to
-    `HARNESSES` for a harness that looks somewhere else.
+    The installer puts the real content in `AGENTS.md` and `.agents/skills/<name>/`. A harness
+    that reads both by itself needs no entry; Antigravity is one. Add an entry to `HARNESSES`
+    for a harness that looks somewhere else.
 
     Attributes:
         name: Name used in messages.
@@ -191,12 +191,21 @@ def _sha256(data: bytes) -> str:
 
 
 def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess:
-    """Run git in `cwd`, capturing output; never raises on a non-zero exit."""
+    """Run a git command and capture its output; never raises on a non-zero exit.
+
+    Args:
+        cwd: Folder git runs in.
+        *args: The git subcommand and its arguments.
+    """
     return subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True)
 
 
 def _head_text(project: Path, rel: str) -> str | None:
-    """Return the text of `rel` as last committed in the project.
+    """Return a file's text as last committed in the project.
+
+    Args:
+        project: Root of the target project.
+        rel: Project-relative path of the file.
 
     Returns:
         The committed text; an empty string if the path is not committed (or the project has
@@ -234,7 +243,7 @@ def _set_staged(project: Path, change: Change, edit: Callable[[str], str | None]
 
 
 def was_ever_shipped(source: Path, data: bytes) -> bool:
-    """Report whether `data` is byte-identical to a file version in the source's git history.
+    """Report whether some contents match a file version in the source's git history.
 
     This is how an unmanifested file from an older, hand-made install is told apart from a
     file the project wrote or edited itself.
@@ -252,9 +261,11 @@ def was_ever_shipped(source: Path, data: bytes) -> bool:
 
 
 def source_commit(source: Path) -> str:
-    """Return the source checkout's commit hash, `+dirty` appended if it has local changes.
+    """Return the commit the source checkout is at, marked if it has local changes.
 
-    Returns `unknown` when the source is not a git checkout.
+    Returns:
+        The full commit hash, with `+dirty` appended when shipped files have uncommitted
+        changes, or `unknown` when the source is not a git checkout.
     """
     head = _git(source, "rev-parse", "HEAD")
     if head.returncode != 0:
@@ -264,10 +275,10 @@ def source_commit(source: Path) -> str:
 
 
 def project_files(project: Path) -> list[str]:
-    """List the project's own files (relative paths), for language detection.
+    """List the project's own files as relative paths, for language detection.
 
-    Uses git's view (tracked plus untracked-but-not-ignored) when the project is a git
-    repository, otherwise walks the tree. Dot-folders and build folders are left out.
+    In a git repository the list is git's view: tracked files plus untracked files that are not
+    ignored. Elsewhere the tree is walked. Dot-folders and build folders are left out.
     """
     listed = _git(project, "ls-files", "--cached", "--others", "--exclude-standard")
     if listed.returncode == 0:
@@ -303,10 +314,11 @@ def load_manifest(project: Path) -> dict:
 
 def lint_files(source: Path, project: Path, files: list[str],
                recorded: dict) -> tuple[dict[str, Path], list[Change]]:
-    """Choose the `LINT_CONFIGS` entries to copy for the languages the project uses.
+    """Choose which standalone linter configs to copy, by the languages the project uses.
 
-    A config is copied when its language is present and the project has no config of that
-    kind, or the existing one was installed by this script (it is in the manifest).
+    The candidates are the `LINT_CONFIGS` entries. One is copied when its language is present
+    and the project has no config of that kind. An existing config counts as absent when this
+    script installed it, which the manifest records.
 
     Args:
         source: Root of the dexiotites checkout.
@@ -431,12 +443,15 @@ def shipped_bodies(source: Path) -> set[str]:
 
 
 def agents_md_text(source: Path, old: str, where: str = "AGENTS.md") -> tuple[str, str, bool]:
-    """Return AGENTS.md text `old` with the marked rules block in place and up to date.
+    """Return the text of an AGENTS.md with the marked rules block in place and up to date.
 
-    Three starting states are handled: a marked block (its body is replaced), an unmarked
-    "Code Comments" section from a hand-made install (replaced only if its body is a version
-    dexiotites shipped, otherwise a conflict), or neither (the block is appended). The
-    project's own heading line is kept, so numbering such as "## 6. Code Comments" survives.
+    Three starting states are handled:
+    - A marked block: its body is replaced.
+    - An unmarked "Code Comments" section from a hand-made install: replaced if its body is a
+      version dexiotites shipped, otherwise a conflict.
+    - Neither: the block is appended.
+
+    The project's own heading line is kept, so numbering such as "## 6. Code Comments" survives.
 
     Args:
         source: Root of the dexiotites checkout.
@@ -512,7 +527,7 @@ def plan_agents_md(source: Path, project: Path) -> Change:
 
 
 def plan_rules_file(project: Path, harness: Harness) -> list[Change]:
-    """Plan the file that makes `harness` load AGENTS.md, if it does not load it by itself.
+    """Plan the file that makes a harness load AGENTS.md, if it does not load it by itself.
 
     With an import line, the line is put at the top of the harness's rules file. Without one,
     the rules file is created as a symlink to AGENTS.md. A rules file that is already a
@@ -545,11 +560,11 @@ def plan_rules_file(project: Path, harness: Harness) -> list[Change]:
 
 
 def plan_skill_links(project: Path, skills: list[str], harness: Harness) -> list[Change]:
-    """Plan the symlinks that let `harness` see each skill in its own skills folder.
+    """Plan the symlinks that let a harness see each skill in its own skills folder.
 
-    Nothing is planned for a skill the harness can already reach there (for example when its
-    skills folder is itself a symlink to `.agents/skills`). A real folder or file in the way
-    is reported and left alone.
+    Nothing is planned for a skill the harness can already reach there. That happens when its
+    skills folder is itself a symlink to `.agents/skills`. A real folder or file in the way is
+    reported and left alone.
     """
     if not harness.skills_dir:
         return []
@@ -578,7 +593,7 @@ def plan_skill_links(project: Path, skills: list[str], harness: Harness) -> list
 
 
 def cargo_lints_text(source: Path, old: str, lint: bool) -> tuple[str | None, str]:
-    """Return Cargo.toml text `old` with the documentation `[lints]` block added or refreshed.
+    """Return the text of a Cargo.toml with the documentation lints block added or refreshed.
 
     The block sits at the end of the file between marker comments and is replaced in place
     when already there. With `lint` False, a block added earlier is removed.
@@ -607,7 +622,7 @@ def cargo_lints_text(source: Path, old: str, lint: bool) -> tuple[str | None, st
 
 
 def plan_cargo_lints(source: Path, project: Path, lint: bool) -> list[Change]:
-    """Plan the documentation `[lints]` block in the project's root Cargo.toml, if it has one."""
+    """Plan the documentation lints block in the project's root Cargo.toml, if it has one."""
     path = project / "Cargo.toml"
     if not path.is_file():
         return []
@@ -798,7 +813,9 @@ def commit_install(project: Path, changes: list[Change]) -> str:
 
 
 def run(source: Path, project: Path, args: argparse.Namespace) -> int:
-    """Plan, report and (unless checking or blocked by conflicts) apply changes to one project.
+    """Plan and report the changes for one project, then apply and commit them.
+
+    Nothing is applied when checking, or when a conflict blocks the run.
 
     Returns:
         0 if the project is or was brought up to date, 1 if conflicts blocked the run or
@@ -856,7 +873,7 @@ def run(source: Path, project: Path, args: argparse.Namespace) -> int:
 def bootstrap(argv: list[str]) -> int:
     """Clone dexiotites to a temporary folder and rerun this script from the clone.
 
-    Used when the script runs on its own (piped from curl), without the repository's files
+    Used when the script runs on its own, piped from curl, without the repository's files
     beside it. `DEXIOTITES_URL` and `DEXIOTITES_REF` override the clone URL and branch.
     """
     url = os.environ.get("DEXIOTITES_URL", SOURCE_URL)

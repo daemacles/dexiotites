@@ -154,8 +154,8 @@ class TestRepoHygiene(unittest.TestCase):
     def test_readme_skills_tables_list_external_requirements(self) -> None:
         """Every README skills table has a filled-in External requirements column.
 
-        MAINTENANCE.md §1 (dependency audit) has authors list each skill's connectors, CLI
-        tools and external skills in that column.
+        The dependency audit in MAINTENANCE.md §1 has authors list each skill's connectors,
+        CLI tools and external skills in that column.
         """
         readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
         skills_section = readme.split("\n## Skills\n", 1)[1].split("\n## ", 1)[0]
@@ -236,7 +236,7 @@ class TestRepoHygiene(unittest.TestCase):
                 self.assertIn(cfg, text, f"{name} does not mention instructions/lint/{cfg}")
 
     def test_toml_files_parse(self) -> None:
-        """TOML configs parse (needs Python 3.11+ for tomllib; skipped otherwise)."""
+        """The shipped TOML configs parse. Skipped where Python has no TOML parser."""
         try:
             import tomllib
         except ImportError:
@@ -247,7 +247,7 @@ class TestRepoHygiene(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("ruff"), "ruff not available")
     def test_repo_python_passes_its_own_doc_linter(self) -> None:
-        """This repo's Python meets the same docstring gate it ships (instructions/lint/)."""
+        """This repo's Python meets the same docstring gate it ships to projects."""
         res = subprocess.run(["ruff", "check", "--no-cache", "--select", "D", "."], cwd=REPO_ROOT,
                              capture_output=True, text=True)
         self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
@@ -310,7 +310,7 @@ class TestRepoHygiene(unittest.TestCase):
                 self.assertTrue((REPO_ROOT / path).exists(), f"{rel} names `{path}`, which does not exist")
 
     def test_readme_internal_links_resolve(self) -> None:
-        """Every `](#anchor)` link in README.md matches a heading (GitHub's slug rules)."""
+        """Every in-page link in README.md matches a heading, by GitHub's slug rules."""
         readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
         slugs = set()
         for heading in re.findall(r"^#{1,6} (.+)$", readme, re.MULTILINE):

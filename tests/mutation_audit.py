@@ -1,20 +1,22 @@
 #!/usr/bin/env python3
-"""Check that the test suite notices the mistakes it exists to prevent (mutation testing).
+"""Check that the test suite notices the mistakes it exists to prevent.
+
+This is mutation testing: break the code on purpose and see whether a test fails.
 
 Each entry in `MUTATIONS` plants one fault in a scratch copy of this repository: either a
 safety rule removed from `install.py`, or an edit to one file that leaves another file out of
 step with it. The suite is then run on the copy. A fault the suite fails on is CAUGHT; one it
 passes on SURVIVED, which means a test is missing or too weak. Faults marked `gap` are ones no
-mechanical test is expected to catch (they need a reader's judgment); they are listed so the
-limits of the suite stay visible.
+mechanical test is expected to catch, because they need a reader's judgment. They are listed
+so the limits of the suite stay visible.
 
 Usage:
     python3 tests/mutation_audit.py            run every mutation
     python3 tests/mutation_audit.py -k cargo   run mutations whose id or description contains "cargo"
 
 Exit code 0 if every non-gap mutation is caught, 1 if any survives, 2 if the unmodified copy
-does not pass (the audit would be meaningless). Not part of `unittest discover`: it takes a few
-minutes. Run it after adding or changing a test, and add a mutation for each new invariant.
+does not pass, since the audit would then be meaningless. Not part of `unittest discover`: it
+takes a few minutes. Run it after adding or changing a test, and add a mutation for each new invariant.
 """
 
 from __future__ import annotations
@@ -150,7 +152,14 @@ MUTATIONS: list[dict] = [
 
 
 def run_suite(repo: Path) -> str | None:
-    """Run the test modules on `repo`; return the first failing test's name, or None if all pass."""
+    """Run the test modules on a copy of the repository.
+
+    Args:
+        repo: Root of the scratch copy.
+
+    Returns:
+        The first failing test's name, or None if every module passes.
+    """
     env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
     for module in MODULES:
         res = subprocess.run([sys.executable, "-m", "unittest", "-f", f"tests.{module}"],
@@ -163,7 +172,15 @@ def run_suite(repo: Path) -> str | None:
 
 
 def apply_mutation(repo: Path, m: dict) -> dict[Path, bytes | None]:
-    """Plant mutation `m` in `repo`; return the original bytes of each touched path (None = absent).
+    """Plant one mutation in the scratch copy.
+
+    Args:
+        repo: Root of the scratch copy.
+        m: The entry from `MUTATIONS` to apply.
+
+    Returns:
+        The original bytes of each path touched, for `restore`. None marks a path that did
+        not exist before.
 
     Raises:
         ValueError: if the text to replace does not occur exactly once (the mutation is stale).
@@ -183,7 +200,11 @@ def apply_mutation(repo: Path, m: dict) -> dict[Path, bytes | None]:
 
 
 def restore(saved: dict[Path, bytes | None]) -> None:
-    """Undo `apply_mutation`, keeping each restored file's permission bits."""
+    """Undo a planted mutation, keeping each restored file's permission bits.
+
+    Args:
+        saved: What `apply_mutation` returned.
+    """
     for path, data in saved.items():
         if data is None:
             path.unlink(missing_ok=True)

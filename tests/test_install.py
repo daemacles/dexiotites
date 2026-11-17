@@ -1,11 +1,16 @@
 """End-to-end tests for install.py, the project installer.
 
-Every test builds a throwaway dexiotites source (this checkout's shipped files committed to a
-fresh git repository, so later commits can stand in for "dexiotites was updated") and one or
-more throwaway projects, then runs the installer as a subprocess exactly as a user would.
-The properties checked are the installer's safety rules: nothing is written when any change
-is unsafe, a second run changes nothing, content the project owns is never replaced without
-`--force`, and what it installs works (the installed checker runs).
+Every test builds a throwaway dexiotites source and one or more throwaway projects, then runs
+the installer as a subprocess exactly as a user would. The source is this checkout's shipped
+files committed to a fresh git repository, so a later commit there stands in for "dexiotites
+was updated".
+
+The properties checked are the installer's safety rules:
+- Nothing is written when any change is unsafe.
+- A second run changes nothing.
+- Content the project owns is never replaced without `--force`.
+- The commit holds the installer's changes and none of the user's uncommitted work.
+- What it installs works: the installed checker runs.
 """
 
 from __future__ import annotations
@@ -33,13 +38,18 @@ COMMIT_ENV = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@examp
 
 
 def git(cwd: Path, *args: str) -> str:
-    """Run git in `cwd` and return stdout; raises CalledProcessError on failure."""
+    """Run a git command in a folder and return its output; raises CalledProcessError on failure."""
     return subprocess.run(["git", *GIT_ID, "-C", str(cwd), *args], check=True,
                           capture_output=True, text=True).stdout
 
 
 def snapshot(root: Path) -> dict[str, tuple]:
-    """Capture every file under `root` (outside .git) as content-or-link-target plus exec bit."""
+    """Capture the state of every file in a folder, leaving out git's own data.
+
+    Returns:
+        A mapping of relative path to the file's bytes and executable bit, or to its target
+        if it is a symlink. Two snapshots are equal exactly when nothing changed.
+    """
     snap = {}
     for path in sorted(root.rglob("*")):
         rel = path.relative_to(root).as_posix()
@@ -76,7 +86,12 @@ class InstallTestCase(unittest.TestCase):
         git(self.source, "commit", "-q", "-m", message)
 
     def project(self, name: str = "proj", files: dict[str, str] | None = None) -> Path:
-        """Create a committed git project holding `files` (default: a one-file Rust crate)."""
+        """Create a git project with one commit holding the given files.
+
+        Args:
+            name: Folder name under the test's temporary folder.
+            files: Relative path to contents. Defaults to a one-file Rust crate.
+        """
         root = self.tmp / name
         root.mkdir()
         files = {"Cargo.toml": CARGO, "src/main.rs": "fn main() {}\n"} if files is None else files

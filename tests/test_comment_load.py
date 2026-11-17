@@ -1,4 +1,4 @@
-"""Tests for comment_load.py, the advisory counter for the guide's sentence rules (section 10).
+"""Tests for comment_load.py, the advisory counter for the commenting guide's sentence rules.
 
 Each case feeds a small source file through the script's functions and checks which warnings
 a sentence earns. The counter must flag the constructions the guide names, stay quiet on
@@ -52,7 +52,11 @@ class Plain
 
 
 def warnings_for(suffix: str, source: str) -> tuple[int, list[str]]:
-    """Run the counter on `source` saved with `suffix`; return sentence count and warning ids."""
+    """Run the counter on a source text saved under a given file suffix.
+
+    Returns:
+        The number of sentences counted, and the id of each warning in order.
+    """
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / f"sample{suffix}"
         path.write_text(source)

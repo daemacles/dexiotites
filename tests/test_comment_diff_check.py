@@ -1,7 +1,7 @@
 """Unit tests for skills/annotate-code/scripts/comment_diff_check.py.
 
-Covers lexical and AST edge cases across Kotlin, Rust, Python, and Lua, plus CLI
-exit-code contracts (including `--strict`) in temporary git repositories.
+Covers lexical and AST edge cases across Kotlin, Rust, Python, and Lua. Also covers the
+command line's exit codes, with and without `--strict`, in temporary git repositories.
 """
 
 from __future__ import annotations

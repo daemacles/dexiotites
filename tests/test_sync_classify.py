@@ -1,8 +1,8 @@
 """Unit tests for skills/sync-skills-repo/scripts/sync_classify.py.
 
-Covers every status (including the merge-then-sync sequence that must keep flagging a
-merged skill until the account copy catches up), the app's save-time formatting, and
-repo-only extracted files that must not affect comparisons.
+Covers every status, the app's save-time formatting, and repo-only extracted files that must
+not affect comparisons. One sequence gets its own case: after a merge, a sync must keep
+flagging the merged skill until the account copy catches up.
 """
 
 from __future__ import annotations

@@ -1,6 +1,6 @@
 """Integration tests for the doc-linter configs in instructions/lint/.
 
-Each test copies a compliant ("good") and a non-compliant ("bad") fixture project from
+Each test copies a compliant fixture project and a non-compliant one, `good` and `bad`, from
 tests/fixtures/lint/ into a temporary folder, installs the distributed config there, runs
 the language's finish-gate command from COMMENTING.md section 8, and expects the good
 project to pass and the bad one to fail. A test is skipped when its tool isn't installed:
@@ -29,7 +29,7 @@ FIXTURES = REPO_ROOT / "tests" / "fixtures" / "lint"
 
 
 def _run(cmd: list[str] | str, cwd: Path, env: dict | None = None) -> subprocess.CompletedProcess:
-    """Run a command (a string runs through the shell) and capture its output."""
+    """Run a command and capture its output. A string, unlike a list, runs through the shell."""
     return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=600, env=env,
                           shell=isinstance(cmd, str))
 
