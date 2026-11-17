@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Classify each account skill against its repo copy using a recorded merge base.
 
-The Claude app's synced skills (the master copies) live in an account root: a folder
-holding `manifest.json` plus one subfolder per skill. The repo keeps a copy of each in
-`skills/<name>/` and, in `skills/.sync-base.json`, a fingerprint of the account version
-each copy was last synced from (its merge base). Comparing all three tells apart "only
-the account changed" (safe to copy), "only the repo changed" and "both changed" (ask).
+The Claude app's synced skills are the master copies. They live in an account root: a
+folder holding `manifest.json` plus one subfolder per skill. The repo keeps a copy of each
+in `skills/<name>/`. It also keeps, in `skills/.sync-base.json`, a fingerprint of the
+account version each copy was last synced from: its merge base. Comparing all three tells
+three cases apart. If only the account changed, copying is safe. If only the repo changed,
+or both did, the user has to decide.
 
 Usage:
     python3 sync_classify.py --account-root DIR --repo DIR
@@ -63,9 +64,15 @@ def normalize(text: str) -> str:
 
 
 def fingerprint(skill_dir: Path, rel_files: list[str]) -> str:
-    """Return a SHA-256 over the normalized contents of `rel_files` inside `skill_dir`.
+    """Fingerprint a skill by the normalized contents of a chosen set of its files.
 
-    A missing file contributes a fixed marker, so a missing file never matches content.
+    Args:
+        skill_dir: The skill's folder.
+        rel_files: Paths of the files to include, relative to that folder.
+
+    Returns:
+        A SHA-256 hex digest. A missing file contributes a fixed marker, so a missing file
+        never matches any content.
     """
     h = hashlib.sha256()
     for rel in sorted(rel_files):
@@ -87,7 +94,8 @@ def fingerprint(skill_dir: Path, rel_files: list[str]) -> str:
 def account_skills(account_root: Path) -> dict[str, dict]:
     """Return Jim's own skills from `manifest.json`, keyed by name.
 
-    Built-in skills (`source` of `anthropic` or `anthropic-example`) are excluded.
+    Built-in skills are excluded. Their manifest `source` is `anthropic` or
+    `anthropic-example`.
     Each value holds `updatedAt` and `files`, the skill's file paths relative to its folder.
     """
     manifest = json.loads((account_root / "manifest.json").read_text(encoding="utf-8"))
