@@ -132,7 +132,7 @@ class TestFreshInstall(InstallTestCase):
         self.assertEqual(os.readlink(proj / ".claude/skills/annotate-code"),
                          "../../.agents/skills/annotate-code")
         self.assertTrue((proj / ".claude/skills/annotate-code/SKILL.md").is_file())
-        self.assertEqual((proj / "CLAUDE.md").read_text(), "@AGENTS.md\n")
+        self.assertEqual((proj / "CLAUDE.md").read_text(), "@AGENTS.md\n@PROJECT_INSTRUCTIONS.md\n")
         agents = (proj / "AGENTS.md").read_text()
         self.assertEqual(agents.count(MARK), 1)
         self.assertTrue(agents.rstrip().endswith("<!-- dexiotites:end -->"))
@@ -298,8 +298,8 @@ class TestAgentsAndClaudeFiles(InstallTestCase):
         for proj in (with_import, without, linked, reverse):
             res = self.install(proj)
             self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
-        self.assertEqual((with_import / "CLAUDE.md").read_text(), "@AGENTS.md\n\nNotes.\n")
-        self.assertEqual((without / "CLAUDE.md").read_text(), "@AGENTS.md\n\nNotes.\n")
+        self.assertEqual((with_import / "CLAUDE.md").read_text(), "@AGENTS.md\n@PROJECT_INSTRUCTIONS.md\n\nNotes.\n")
+        self.assertEqual((without / "CLAUDE.md").read_text(), "@AGENTS.md\n@PROJECT_INSTRUCTIONS.md\n\nNotes.\n")
         self.assertTrue((linked / "CLAUDE.md").is_symlink())
         self.assertIn(MARK, (linked / "AGENTS.md").read_text())
         self.assertNotIn("@AGENTS.md", (linked / "AGENTS.md").read_text(), "wrote through the symlink")
@@ -586,7 +586,7 @@ class TestCommit(InstallTestCase):
         self.assertTrue(committed_cargo.startswith(CARGO))
         self.assertIn("[lints.rust]", committed_cargo)
         self.assertNotIn("serde", committed_cargo)
-        self.assertEqual(git(proj, "show", "HEAD:CLAUDE.md"), "@AGENTS.md\n\nHouse notes.\n")
+        self.assertEqual(git(proj, "show", "HEAD:CLAUDE.md"), "@AGENTS.md\n@PROJECT_INSTRUCTIONS.md\n\nHouse notes.\n")
         self.assertTrue(git(proj, "show", "HEAD:AGENTS.md").startswith(MARK))
         self.assertNotIn("Draft rules", git(proj, "show", "HEAD:AGENTS.md"))
         # The working copies keep both the user's work and the installer's edit.
@@ -638,6 +638,53 @@ class TestCommit(InstallTestCase):
         self.assertEqual(git(proj, "diff", "--cached", "--name-only"), "", "the user's index must be untouched")
 
 
+class TestProjectAndPersonalInstructions(InstallTestCase):
+    """The project's own instructions file, and the opt-in personal defaults."""
+
+    def test_empty_project_file_is_created_committed_and_loaded(self) -> None:
+        proj = self.project()
+        self.assertEqual(self.install(proj).returncode, 0)
+        self.assertEqual((proj / "PROJECT_INSTRUCTIONS.md").read_bytes(), b"")
+        self.assertEqual(git(proj, "show", "HEAD:PROJECT_INSTRUCTIONS.md"), "")
+        self.assertIn("@PROJECT_INSTRUCTIONS.md", (proj / "CLAUDE.md").read_text())
+        rule = (proj / ".agents/rules/project-instructions.md").read_text()
+        self.assertIn("`PROJECT_INSTRUCTIONS.md`", rule)
+        self.assertFalse((proj / ".agents/rules/jim-defaults.md").exists(), "personal defaults are opt-in")
+        self.assertNotIn("jim", (proj / "CLAUDE.md").read_text())
+
+    def test_project_file_belongs_to_the_project_once_created(self) -> None:
+        proj = self.project()
+        self.assertEqual(self.install(proj).returncode, 0)
+        (proj / "PROJECT_INSTRUCTIONS.md").write_text("Use metric units.\n")
+        self.edit_source("instructions/COMMENTING.md", "## 1.", "## 1. (revised)")
+        self.commit_source("v2")
+        self.assertEqual(self.install(proj).returncode, 0)
+        self.assertEqual((proj / "PROJECT_INSTRUCTIONS.md").read_text(), "Use metric units.\n")
+        self.assertEqual(git(proj, "show", "HEAD:PROJECT_INSTRUCTIONS.md"), "",
+                         "the project's own text must not be committed by the installer")
+        self.assertEqual(self.install(proj, "--check").returncode, 0)
+
+        own = self.project("own", {"PROJECT_INSTRUCTIONS.md": "Already here.\n"})
+        self.assertEqual(self.install(own).returncode, 0)
+        self.assertEqual((own / "PROJECT_INSTRUCTIONS.md").read_text(), "Already here.\n")
+
+    def test_with_jim_installs_the_personal_defaults_and_is_remembered(self) -> None:
+        proj = self.project(files={"CLAUDE.md": "@AGENTS.md\n\nNotes.\n"})
+        self.assertEqual(self.install(proj, "--with-jim").returncode, 0)
+        self.assertEqual((proj / ".agents/rules/jim-defaults.md").read_bytes(),
+                         (self.source / "instructions/rules/jim-defaults.md").read_bytes())
+        self.assertEqual((proj / "CLAUDE.md").read_text(),
+                         "@AGENTS.md\n@PROJECT_INSTRUCTIONS.md\n@.agents/rules/jim-defaults.md\n\nNotes.\n")
+        self.assertEqual(git(proj, "status", "--porcelain"), "")
+        self.edit_source("instructions/rules/jim-defaults.md", "Teach me terms of art", "Teach me the terms of art")
+        self.commit_source("v2")
+        self.assertEqual(self.install(proj).returncode, 0)        # no flag: remembered
+        self.assertIn("Teach me the terms of art", (proj / ".agents/rules/jim-defaults.md").read_text())
+        before = snapshot(proj)
+        self.assertEqual(self.install(proj).returncode, 0)
+        self.assertEqual(snapshot(proj), before)
+
+
 class TestExtensionTables(InstallTestCase):
     """The README's claim that one table entry in install.py adds a linter or a harness."""
 
@@ -669,7 +716,7 @@ class TestExtensionTables(InstallTestCase):
     def test_one_harness_entry_supports_a_new_harness(self) -> None:
         self.edit_source("install.py", "HARNESSES = (\n",
                          'HARNESSES = (\n'
-                         '    Harness("Importer", rules_file="IMPORTER.md", import_line="!include AGENTS.md", '
+                         '    Harness("Importer", rules_file="IMPORTER.md", import_format="!include {path}", '
                          'skills_dir=".importer/tools/skills"),\n'
                          '    Harness("Linker", rules_file=".linker/RULES.md"),\n')
         self.commit_source("add two harnesses")
@@ -678,7 +725,7 @@ class TestExtensionTables(InstallTestCase):
         res = self.install(proj)
         self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
         # A harness with an import syntax: the line is added, existing content kept, skills linked.
-        self.assertEqual((proj / "IMPORTER.md").read_text(), "!include AGENTS.md\n\nHouse rules.\n")
+        self.assertEqual((proj / "IMPORTER.md").read_text(), "!include AGENTS.md\n!include PROJECT_INSTRUCTIONS.md\n\nHouse rules.\n")
         self.assertEqual(os.readlink(proj / ".importer/tools/skills/annotate-code"),
                          "../../../.agents/skills/annotate-code")
         self.assertTrue((proj / ".importer/tools/skills/annotate-code/SKILL.md").is_file())
@@ -686,7 +733,7 @@ class TestExtensionTables(InstallTestCase):
         self.assertEqual(os.readlink(proj / ".linker/RULES.md"), "../AGENTS.md")
         self.assertIn(MARK, (proj / ".linker/RULES.md").read_text())
         # Claude Code's entry still works alongside them.
-        self.assertEqual((proj / "CLAUDE.md").read_text(), "@AGENTS.md\n")
+        self.assertEqual((proj / "CLAUDE.md").read_text(), "@AGENTS.md\n@PROJECT_INSTRUCTIONS.md\n")
         before = snapshot(proj)
         self.assertEqual(self.install(proj).returncode, 0)
         self.assertEqual(snapshot(proj), before)

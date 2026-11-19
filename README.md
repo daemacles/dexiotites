@@ -7,6 +7,7 @@ into coding projects, plus mirrors of the personal Claude workflow skills built 
 |---|---|
 | `install.py` | Installs or updates the commenting standard in a project with one command. See [Install or update](#install-or-update-one-command). |
 | `instructions/COMMENTING.md` | Commenting standard for AI coding agents: purpose-first comments, sourced rationale, comment-only retrofits. Ends with exemplar codebases and references. |
+| `instructions/rules/` | Rule files the installer copies into a project's `.agents/rules/`: the pointer to `PROJECT_INSTRUCTIONS.md`, and the opt-in personal defaults. |
 | `instructions/AGENTS-commenting-section.md` | Short section the installer places in a project's `AGENTS.md` so every agent session loads the core rules. |
 | `instructions/lint/` | Doc-linter configs that enforce the mechanical part of the standard (Kotlin, Rust, Python, Lua). See [Doc linters](#doc-linters-tier-1). |
 | `skills/` | One folder per skill (see [Skills](#skills)). |
@@ -80,7 +81,9 @@ Pass `--dont-add` to install without committing. A later plain run commits what 
 | `.agents/skills/annotate-code/` | The retrofit skill and its checker (Antigravity reads it here). |
 | `.claude/skills/annotate-code` | Symlink to the folder above, for Claude Code. |
 | `AGENTS.md` | The always-loaded core rules, between `<!-- dexiotites:begin … -->` and `<!-- dexiotites:end -->`. Your own heading line (for example `## 6. Code Comments …`) is kept. |
-| `CLAUDE.md` | Gets an `@AGENTS.md` line if it lacks one. |
+| `PROJECT_INSTRUCTIONS.md` | Starts empty. Put this project's own instructions for agents here. The installer creates it once and never changes it again. |
+| `.agents/rules/project-instructions.md` | Tells agents to read the file above. Antigravity loads every file in `.agents/rules/` by itself. |
+| `CLAUDE.md` | Gets import lines for `AGENTS.md` and `PROJECT_INSTRUCTIONS.md` if it lacks them, so Claude Code loads both. |
 | Doc-linter config | For each language found; see [Doc linters](#doc-linters-tier-1). |
 | `.dexiotites.json` | Manifest: the dexiotites commit installed, options, and a hash of each copied file. Commit it. |
 
@@ -91,6 +94,7 @@ Pass `--dont-add` to install without committing. A later plain run commits what 
 | `--check` | Writes nothing. Exit code 0 if the project is current and committed, 1 if it is out of date, has conflicts, or has installed files that are not committed. |
 | `--dont-add` | Install or update the files, but do not `git add` or commit them. |
 | `--skill NAME` | Also install another skill from `skills/` (for example `--skill distill-spec`). Remembered for later runs. |
+| `--with-jim` | Also install the maintainer's personal defaults for working with an agent (`instructions/rules/jim-defaults.md`): teach terms of art, show a plan first, coach the prompt. Remembered. Leave it off unless you are Jim or want the same. |
 | `--no-lint` / `--lint` | Leave out (and remove) the doc-linter configs, or turn them back on. Remembered. |
 | `--force` | Replace conflicting files. Local edits in them are lost. |
 
@@ -107,7 +111,7 @@ Exit code 2 means the files were installed but git refused the commit (no identi
 or a commit hook failed). Fix the cause and rerun; nothing is installed twice.
 
 **Do not edit the installed copies in a project.** Rules for one project only go in that
-project's `AGENTS.md`, outside the marked block. Rules for every project go in the masters in
+project's `PROJECT_INSTRUCTIONS.md`. Rules for every project go in the masters in
 this repo; then rerun the installer in each project. `--check` in a project tells you whether
 it is behind.
 
@@ -229,7 +233,7 @@ frequently out of date):
 
 | Where | What to add | What checks it |
 |---|---|---|
-| `install.py` | One `Harness` entry in `HARNESSES`: the always-loaded file, the import line (leave it empty and the file becomes a symlink to `AGENTS.md`), and the skills folder (each skill is symlinked into it). | `tests/test_install.py` (copy `test_one_harness_entry_supports_a_new_harness`) |
+| `install.py` | One `Harness` entry in `HARNESSES`: the always-loaded file, the import format (leave it empty and the file becomes a symlink to `AGENTS.md`), and the skills folder (each skill is symlinked into it). | `tests/test_install.py` (copy `test_one_harness_entry_supports_a_new_harness`) |
 | `README.md` | The harness under "How each agent finds them", the files it adds to the installed-files table, and a row in [Running annotate-code](#running-annotate-code). | Hygiene test (every `HARNESSES` name appears) |
 | `skills/*/SKILL.md` | Nothing, usually. Re-read `MAINTENANCE.md` §1 with the new harness in mind: skills must activate from their description alone, and must not assume tools only one harness has. | Review only |
 

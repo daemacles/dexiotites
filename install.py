@@ -15,7 +15,11 @@ What it puts in a project. All of it is plain files, so a fresh clone needs noth
     .agents/skills/<skill>/            each requested skill (default: annotate-code)
     .claude/skills/<skill>             symlink to the folder above, for Claude Code
     AGENTS.md                          the always-loaded rules, in a marked block
-    CLAUDE.md                          an `@AGENTS.md` import line, if missing
+    PROJECT_INSTRUCTIONS.md            an empty file for the project's own instructions,
+                                       created once and never touched again
+    .agents/rules/                     a rule that tells agents to read that file; with
+                                       `--with-jim`, also the maintainer's personal defaults
+    CLAUDE.md                          import lines for AGENTS.md and the files above, if missing
     doc-linter config                  per language found: Cargo.toml `[lints]` block (Rust),
                                        ruff.toml (Python), .luarc.json (Lua),
                                        config/detekt/detekt-comments.yml (Kotlin)
@@ -65,6 +69,11 @@ from pathlib import Path
 SOURCE_URL = "https://github.com/daemacles/dexiotites"
 MANIFEST = ".dexiotites.json"
 DEFAULT_SKILLS = ("annotate-code",)
+PROJECT_FILE = "PROJECT_INSTRUCTIONS.md"
+# Rule files copied from `instructions/rules/` into the project's `.agents/rules/`, where
+# Antigravity loads every file by itself. The second is installed only with `--with-jim`.
+PROJECT_RULE = "project-instructions.md"
+JIM_RULE = "jim-defaults.md"
 TEMPLATE = Path("instructions") / "AGENTS-commenting-section.md"
 
 BEGIN = ("<!-- dexiotites:begin (managed by dexiotites install.py: rerun it to update; "
@@ -136,21 +145,23 @@ class Harness:
         name: Name used in messages.
         rules_file: Project-relative file the harness always loads in place of AGENTS.md, or
             empty if it loads AGENTS.md itself.
-        import_line: The line that makes `rules_file` pull in AGENTS.md, in the harness's own
-            import syntax. Empty if the harness has none: `rules_file` is then created as a
-            symlink to AGENTS.md.
+        import_format: How one import line is written in `rules_file`, with `{path}` standing
+            for the imported file. The installer writes one such line for AGENTS.md, one for the
+            project's own instructions file, and one per optional rule file. Empty if the
+            harness has no import syntax: `rules_file` is then created as a symlink to AGENTS.md
+            and the other files are not loaded by this harness.
         skills_dir: Project-relative folder the harness discovers skills in, or empty if it
             reads `.agents/skills/` itself. Each installed skill is symlinked into it.
     """
 
     name: str
     rules_file: str = ""
-    import_line: str = ""
+    import_format: str = ""
     skills_dir: str = ""
 
 
 HARNESSES = (
-    Harness("Claude Code", rules_file="CLAUDE.md", import_line="@AGENTS.md", skills_dir=".claude/skills"),
+    Harness("Claude Code", rules_file="CLAUDE.md", import_format="@{path}", skills_dir=".claude/skills"),
 )
 
 
@@ -359,7 +370,7 @@ def _read_text(path: Path) -> str:
 
 
 def plan_copies(source: Path, project: Path, manifest: dict, skills: list[str],
-                lint: bool, files: list[str]) -> list[Change]:
+                lint: bool, files: list[str], rules: list[str]) -> list[Change]:
     """Plan every verbatim file copy, and removal of copies dexiotites no longer ships.
 
     Args:
@@ -369,6 +380,7 @@ def plan_copies(source: Path, project: Path, manifest: dict, skills: list[str],
         skills: Skill folder names to install.
         lint: Whether to install standalone linter configs.
         files: The project's own files, from `project_files`.
+        rules: Names of the rule files to install, from `instructions/rules/`.
 
     Returns:
         One `Change` per shipped file (status `create`, `update`, `unchanged` or `conflict`),
@@ -376,6 +388,8 @@ def plan_copies(source: Path, project: Path, manifest: dict, skills: list[str],
     """
     recorded: dict = manifest.get("files", {})
     shipped: dict[str, Path] = {"docs/COMMENTING.md": source / "instructions" / "COMMENTING.md"}
+    for rule in rules:
+        shipped[f".agents/rules/{rule}"] = source / "instructions" / "rules" / rule
     for skill in skills:
         root = source / "skills" / skill
         for path in sorted(root.rglob("*")):
@@ -526,10 +540,11 @@ def plan_agents_md(source: Path, project: Path) -> Change:
 # --------------------------------------------------------------------------- other files
 
 
-def plan_rules_file(project: Path, harness: Harness) -> list[Change]:
+def plan_rules_file(project: Path, harness: Harness, imports: list[str]) -> list[Change]:
     """Plan the file that makes a harness load AGENTS.md, if it does not load it by itself.
 
-    With an import line, the line is put at the top of the harness's rules file. Without one,
+    With an import syntax, one line per path in `imports` is kept at the top of the harness's
+    rules file; lines already there are left alone and missing ones are added after them. Without one,
     the rules file is created as a symlink to AGENTS.md. A rules file that is already a
     symlink is left alone: it normally points at AGENTS.md, and writing through it would edit
     its target. So is one that AGENTS.md is a symlink to, where the import would make the file
@@ -541,21 +556,31 @@ def plan_rules_file(project: Path, harness: Harness) -> list[Change]:
     path = project / rel
     if path.is_symlink() or (path.exists() and (project / "AGENTS.md").resolve() == path.resolve()):
         return [Change(rel, "unchanged")]
-    if not harness.import_line:
+    if not harness.import_format:
         if path.exists():
             return [Change(rel, "note", f"exists and is not a symlink to AGENTS.md: left as is; "
                            f"{harness.name} will not load the commenting rules from it")]
         return [Change(rel, "create", link=os.path.relpath("AGENTS.md", Path(rel).parent))]
 
+    wanted = [harness.import_format.format(path=path) for path in imports]
+    marker = harness.import_format.split("{path}")[0]
+
     def with_import(text: str) -> str:
-        if any(line.strip().startswith(harness.import_line) for line in text.splitlines()):
+        lines = text.splitlines()
+        missing = [w for w in wanted if not any(line.strip().startswith(w) for line in lines)]
+        if not missing:
             return text
-        return f"{harness.import_line}\n\n{text}" if text else f"{harness.import_line}\n"
+        head = 0                                  # length of the leading run of import lines
+        while head < len(lines) and marker and lines[head].startswith(marker):
+            head += 1
+        rest = lines[head:]
+        gap = [""] if rest and rest[0].strip() else []
+        return "\n".join([*lines[:head], *missing, *gap, *rest]) + "\n"
 
     old = path.read_text(encoding="utf-8") if path.exists() else ""
     new = with_import(old)
     status = "unchanged" if new == old else "update" if path.exists() else "create"
-    detail = f"added the {harness.import_line} import line" if status == "update" else ""
+    detail = "added import lines" if status == "update" else ""
     return [_set_staged(project, Change(rel, status, detail, content=new.encode("utf-8")), with_import)]
 
 
@@ -638,8 +663,23 @@ def plan_cargo_lints(source: Path, project: Path, lint: bool) -> list[Change]:
 # --------------------------------------------------------------------------- driver
 
 
+def plan_project_file(project: Path) -> list[Change]:
+    """Plan the project's own instructions file: created empty once, then left to the project.
+
+    The file is committed only while it is still empty and not yet committed, so content the
+    project writes into it is never committed by the installer.
+    """
+    path = project / PROJECT_FILE
+    if not path.exists():
+        return [Change(PROJECT_FILE, "create", content=b"")]
+    committed = _git(project, "ls-tree", "HEAD", "--", PROJECT_FILE).stdout.strip()
+    if path.is_file() and not committed and path.read_bytes() == b"":
+        return [Change(PROJECT_FILE, "unchanged", content=b"")]
+    return [Change(PROJECT_FILE, "unchanged")]
+
+
 def plan(source: Path, project: Path, skills: list[str] | None, lint: bool | None,
-         force: bool = False) -> tuple[list[Change], dict]:
+         force: bool = False, with_jim: bool = False) -> tuple[list[Change], dict]:
     """Compute every change needed to bring one project up to date with the source.
 
     Args:
@@ -650,6 +690,8 @@ def plan(source: Path, project: Path, skills: list[str] | None, lint: bool | Non
         lint: False to remove linter configs this script installed, True to install them,
             None to reuse the manifest's choice (default True).
         force: Turn conflicts into updates, replacing the conflicting content.
+        with_jim: Also install the maintainer's personal default instructions. Once set, the
+            manifest remembers it.
 
     Returns:
         The planned changes, and the manifest to write if any managed content changes.
@@ -662,16 +704,20 @@ def plan(source: Path, project: Path, skills: list[str] | None, lint: bool | Non
     manifest = load_manifest(project)
     skills = sorted(set(manifest.get("skills", DEFAULT_SKILLS)) | set(skills or ()))
     lint = manifest.get("lint", True) if lint is None else lint
+    with_jim = with_jim or bool(manifest.get("with_jim"))
+    rules = [PROJECT_RULE, *([JIM_RULE] if with_jim else [])]
+    imports = ["AGENTS.md", PROJECT_FILE, *([f".agents/rules/{JIM_RULE}"] if with_jim else [])]
     for skill in skills:
         if not (source / "skills" / skill / "SKILL.md").is_file():
             available = sorted(p.name for p in (source / "skills").iterdir() if p.is_dir())
             raise InstallError(f"no such skill: {skill} (available: {', '.join(available)})")
 
     files = project_files(project)
-    changes = plan_copies(source, project, manifest, skills, lint, files)
+    changes = plan_copies(source, project, manifest, skills, lint, files, rules)
+    changes.extend(plan_project_file(project))
     changes.append(plan_agents_md(source, project))
     for harness in HARNESSES:
-        changes.extend(plan_rules_file(project, harness))
+        changes.extend(plan_rules_file(project, harness, imports))
         changes.extend(plan_skill_links(project, skills, harness))
     changes.extend(plan_cargo_lints(source, project, lint))
     if force:
@@ -686,11 +732,12 @@ def plan(source: Path, project: Path, skills: list[str] | None, lint: bool | Non
         "commit": source_commit(source),
         "skills": skills,
         "lint": lint,
+        **({"with_jim": True} if with_jim else {}),
         "files": dict(sorted(hashes.items())),
     }
-    old_view = {k: manifest.get(k) for k in ("skills", "lint", "files")}
+    old_view = {k: manifest.get(k) for k in ("skills", "lint", "files", "with_jim")}
     content_changed = any(c.status in ("create", "update", "remove") for c in changes)
-    if content_changed or old_view != {k: new_manifest[k] for k in old_view}:
+    if content_changed or old_view != {k: new_manifest.get(k) for k in old_view}:
         data = (json.dumps(new_manifest, indent=2) + "\n").encode("utf-8")
         status = "update" if (project / MANIFEST).exists() else "create"
         changes.append(Change(MANIFEST, status, content=data))
@@ -829,7 +876,7 @@ def run(source: Path, project: Path, args: argparse.Namespace) -> int:
     if not is_repo_root:
         print("  warning: not the root of a git repository; annotate-code's checker needs git")
     lint = False if args.no_lint else (True if args.lint else None)
-    changes, manifest = plan(source, project, args.skill, lint, args.force)
+    changes, manifest = plan(source, project, args.skill, lint, args.force, args.with_jim)
 
     conflicts = [c for c in changes if c.status == "conflict"]
     pending = [c for c in changes if c.status in ("create", "update", "remove")]
@@ -842,8 +889,8 @@ def run(source: Path, project: Path, args: argparse.Namespace) -> int:
         print(f"  NOTHING WRITTEN: {len(conflicts)} conflict(s). The files marked 'conflict' hold "
               "content that did not come from dexiotites.\n  --force replaces those files and "
               "that content is lost: ask the project's owner first.\n  To keep the content, copy "
-              "it out before forcing. Project-specific commenting rules belong in AGENTS.md,\n"
-              "  outside the dexiotites block (or in dexiotites itself, if every project should get them).")
+              "it out before forcing. Instructions for this project alone belong in\n"
+              f"  {PROJECT_FILE}; rules for every project belong in dexiotites itself.")
         return 1
     if args.check:
         if pending or conflicts:
@@ -904,6 +951,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--skill", action="append", metavar="NAME",
                     help="extra skill to install besides annotate-code, e.g. distill-spec; "
                          "repeatable, and remembered for later runs")
+    ap.add_argument("--with-jim", action="store_true",
+                    help="also install the maintainer's personal default instructions for "
+                         "agents (terms of art, plan first, prompt coaching); remembered")
     ap.add_argument("--dont-add", action="store_true",
                     help="install or update the files but do not `git add` or commit them")
     ap.add_argument("--no-lint", action="store_true",
